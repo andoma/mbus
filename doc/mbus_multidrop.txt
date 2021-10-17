@@ -1,0 +1,48 @@
+Framing HDLC Lite
+
+0x7e = Frame Delimiter
+0x7d = Escape
+
+Address nibble pair: [ssss_dddd]
+
+Broadcast address: 0x7
+Note that broadcast is never used as source address.
+Thus, the address byte never needs to be HDLC escaped
+
+
+Typical packet:
+
+[Frame Delimiter] [Adddress] ... [CRC32] [Frame Delimiter]
+                  |=== HDLC ESCAPED ===|
+
+
+
+# States
+
+## IDLE
+
+   Bus is idle.
+
+   Next state: TX (We want to send)
+               RX (Received a start byte)
+
+
+## TX
+
+   We are sending (and receiving our own data)
+
+   Next state: GAP (Packet is transfered or error is detected)
+
+## GAP
+
+   Short pause to allow others on bus to send
+
+   Next state: IDLE (If our TX queue is empty)
+               TX (If we have something to send)
+               RX (If someone else is sending)
+
+## RX
+
+   Receive packets
+
+   Next state: GAP (No data is coming)
