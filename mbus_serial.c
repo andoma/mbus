@@ -61,6 +61,7 @@ typedef struct {
   struct mbus_packet_queue ms_mpq;
   pthread_mutex_t ms_mpq_mutex;
 
+  uint8_t ms_sync;
   uint8_t ms_rxlen;
   uint8_t ms_rxbuf[256];
 
@@ -76,15 +77,25 @@ typedef struct mbus_packet {
 
 #define MBUS_STATE_IDLE     0
 #define MBUS_STATE_TX       1
-#define MBUS_STATE_GAP      2
-#define MBUS_STATE_RX       3
+#define MBUS_STATE_RX       2
 
+
+static void
+set_nonblocking(int fd, int on)
+{
+  int flags = fcntl(fd, F_GETFL);
+  if(on) {
+    flags |= O_NONBLOCK;
+  } else {
+    flags &= ~O_NONBLOCK;
+  }
+  fcntl(fd, F_SETFL, flags);
+}
 
 
 int
 setupdev(mbus_serial_t *ms, int baudrate)
 {
-
   int cflags = CS8 | CLOCAL | CREAD;
 
   switch(baudrate) {
@@ -143,7 +154,7 @@ setupdev(mbus_serial_t *ms, int baudrate)
     perror("tcsetattr");
     return -1;
   }
-#if 1
+
   struct serial_struct serial;
   if(ioctl(ms->ms_fd, TIOCGSERIAL, &serial)) {
     perror("TIOCGSERIAL");
@@ -154,7 +165,9 @@ setupdev(mbus_serial_t *ms, int baudrate)
     perror("TIOCSSERIAL");
     return -1;
   }
-#endif
+
+
+  set_nonblocking(ms->ms_fd, 1);
   return 0;
 }
 
@@ -304,6 +317,8 @@ set_txe(mbus_serial_t *ms, int on)
 int
 mbus_bus_tx(mbus_serial_t *ms)
 {
+  ms->ms_sync = 0;
+
   pthread_mutex_lock(&ms->ms_mpq_mutex);
   mbus_packet_t *mp = TAILQ_FIRST(&ms->ms_mpq);
   pthread_mutex_unlock(&ms->ms_mpq_mutex);
@@ -313,9 +328,9 @@ mbus_bus_tx(mbus_serial_t *ms)
   }
 
   set_txe(ms, 1);
-  hexdump("TX", mp->mp_data, mp->mp_size);
+
   if(write(ms->ms_fd, mp->mp_data, mp->mp_size) != mp->mp_size) {
-    mbus_set_state(ms, MBUS_STATE_GAP, "tx: write-fail");
+    mbus_set_state(ms, MBUS_STATE_RX, "tx: write-fail");
     return 0;
   }
 
@@ -327,58 +342,37 @@ mbus_bus_tx(mbus_serial_t *ms)
     struct pollfd pfd[1];
     pfd[0].fd = ms->ms_fd;
     pfd[0].events = POLLIN;
-    int r = poll(pfd, 1, 25);
+    int r = poll(pfd, 1, 10);
     if(r != 1) {
-      mbus_set_state(ms, MBUS_STATE_GAP, "tx: Read timeout");
       set_txe(ms, 0);
+      mbus_set_state(ms, MBUS_STATE_RX, "tx: Read timeout");
       return 0;
     }
 
     r = read(ms->ms_fd, bounce + echo_rx_size, mp->mp_size - echo_rx_size);
     if(r < 0) {
       set_txe(ms, 0);
-      mbus_set_state(ms, MBUS_STATE_GAP, "tx: Read error");
+      mbus_set_state(ms, MBUS_STATE_RX, "tx: Read error");
       return 0;
     }
 
+    if(memcmp(bounce + echo_rx_size,
+              mp->mp_data + echo_rx_size, r)) {
+      set_txe(ms, 0);
+      mbus_set_state(ms, MBUS_STATE_RX, "tx: Noise/Collision");
+      return 0;
+    }
     echo_rx_size += r;
   }
 
   set_txe(ms, 0);
-  if(memcmp(bounce, mp->mp_data, mp->mp_size)) {
-    mbus_set_state(ms, MBUS_STATE_GAP, "tx: Noise/Collision");
-    return 0;
-  }
-
   pthread_mutex_lock(&ms->ms_mpq_mutex);
   TAILQ_REMOVE(&ms->ms_mpq, mp, mp_link);
   pthread_mutex_unlock(&ms->ms_mpq_mutex);
   free(mp);
-  mbus_set_state(ms, MBUS_STATE_GAP, "tx: Done");
+  mbus_set_state(ms, MBUS_STATE_RX, "tx: Done");
   return 0;
 }
-
-
-int
-mbus_bus_gap(mbus_serial_t *ms)
-{
-  struct pollfd pfd[1];
-
-  pfd[0].fd = ms->ms_fd;
-  pfd[0].events = POLLIN;
-
-  int r = poll(pfd, 1, 10);
-  if(r == -1) {
-    perror("poll");
-    return -1;
-  }
-  if(r == 0)
-    return mbus_bus_tx(ms);
-
-  mbus_set_state(ms, MBUS_STATE_RX, "gap: rx");
-  return 0;
-}
-
 
 
 static void
@@ -406,7 +400,7 @@ mbus_bus_rx(mbus_serial_t *ms)
 
   pfd[0].fd = ms->ms_fd;
   pfd[0].events = POLLIN;
-  int r = poll(pfd, 1, 0);
+  int r = poll(pfd, 1, 10);
   if(r == -1) {
     perror("poll");
     return -1;
@@ -428,8 +422,12 @@ mbus_bus_rx(mbus_serial_t *ms)
     }
 
     ms->ms_rxlen = 0;
+    ms->ms_sync = 1;
     return 0;
   }
+
+  if(!ms->ms_sync)
+    return 0;
 
   ms->ms_rxbuf[ms->ms_rxlen] = c;
   ms->ms_rxlen++;
@@ -452,9 +450,6 @@ mbus_thread(void *arg)
       break;
     case MBUS_STATE_TX:
       r = mbus_bus_tx(ms);
-      break;
-    case MBUS_STATE_GAP:
-      r = mbus_bus_gap(ms);
       break;
     case MBUS_STATE_RX:
       r = mbus_bus_rx(ms);
@@ -499,6 +494,8 @@ mbus_create_serial(const char *device, int baudrate,
   ms->m.m_our_addr = local_addr;
   ms->m.m_send = mbus_serial_send;
   ms->m.m_destroy = mbus_serial_destroy;
+
+  mbus_init_common(&ms->m);
 
   pthread_create(&ms->ms_tid, NULL, mbus_thread, ms);
 
