@@ -1,6 +1,7 @@
 #include "mbus.h"
 #include "mbus_i.h"
 
+#include <sys/param.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -84,6 +85,7 @@ static const uint32_t crc32table[256] = {
     0x660951ba, 0x110e612c, 0x88073096, 0xff000000
 };
 
+
 uint32_t
 mbus_crc32(uint32_t crc, const void *data, size_t n_bytes)
 {
@@ -115,6 +117,24 @@ typedef struct mbus_method {
 
 
 typedef struct mbus_rpc mbus_rpc_t;
+
+
+static void *dsig_thread(void *aux);
+
+static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len);
+
+
+void
+mbus_init_common(mbus_t *m)
+{
+  pthread_condattr_t attr;
+  pthread_condattr_init(&attr);
+  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+  pthread_cond_init(&m->m_dsig_driver_cond, &attr);
+  pthread_condattr_destroy(&attr);
+
+  pthread_create(&m->m_dsig_thread, NULL, dsig_thread, m);
+}
 
 void
 mbus_destroy(mbus_t *m)
@@ -164,7 +184,7 @@ void
 mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len)
 {
   if(~mbus_crc32(0, pkt, len)) {
-    printf("CRC FAIL\n");
+    hexdump("CRCERR", pkt, len);
     return;
   }
   if(len < 6) {
@@ -233,9 +253,11 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len)
     mr_completed(mr);
     break;
 
+  case MBUS_OP_DSIG_EMIT:
+    dsig_handle(m, pkt, len);
+    break;
+
   default:
-    printf("Got op %d\n", opcode);
-    hexdump("DATA", pkt, len);
     break;
   }
 }
@@ -276,14 +298,14 @@ mbus_rpc_wait(mbus_rpc_t* mr, mbus_t *m,
 static mbus_error_t
 mbus_resolve_id(mbus_t *m, uint8_t addr, const char *name,
                 uint32_t* idp,
-                const struct timespec* deadline)
+                const struct timespec* deadline,
+                int overwrite)
 {
   mbus_method_t *mm;
-  printf("Checking for %s @ %d\n", name, addr);
   LIST_FOREACH(mm, &m->m_methods, mm_link) {
-    printf("* %d %d %s %s\n", mm->mm_addr, addr,
-           mm->mm_name, name);
     if(mm->mm_addr == addr && !strcmp(mm->mm_name, name)) {
+      if(overwrite)
+        break;
       *idp = mm->mm_id;
       return 0;
     }
@@ -309,11 +331,13 @@ mbus_resolve_id(mbus_t *m, uint8_t addr, const char *name,
 
   memcpy(idp, mr.mr_reply, sizeof(uint32_t));
 
-  mm = malloc(sizeof(mbus_method_t) + namelen + 1);
+  if(mm == NULL) {
+    mm = malloc(sizeof(mbus_method_t) + namelen + 1);
+    LIST_INSERT_HEAD(&m->m_methods, mm, mm_link);
+    strcpy(mm->mm_name, name);
+    mm->mm_addr = addr;
+  }
   mm->mm_id = *idp;
-  mm->mm_addr = addr;
-  LIST_INSERT_HEAD(&m->m_methods, mm, mm_link);
-  strcpy(mm->mm_name, name);
   return 0;
 }
 
@@ -363,13 +387,20 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
 {
   uint32_t method_id;
 
-  mbus_error_t err = mbus_resolve_id(m, addr, name, &method_id, deadline);
-  if(err)
-    return err;
+  for(int i = 0; i < 2; i++) {
+    mbus_error_t err = mbus_resolve_id(m, addr, name, &method_id, deadline,
+                                       i == 1);
+    if(err)
+      return err;
 
-  err = mbus_invoke_id(m, addr, method_id, req, req_size, reply, reply_size,
-                       deadline);
-  return err;
+    err = mbus_invoke_id(m, addr, method_id, req, req_size, reply, reply_size,
+                         deadline);
+    printf("err=%d\n", err);
+    if(err == MBUS_ERR_INVALID_RPC_ID)
+      continue;
+    return err;
+  }
+  return MBUS_ERR_INVALID_RPC_ID;
 }
 
 
@@ -457,11 +488,9 @@ mbus_error_to_string(mbus_error_t err)
 }
 
 mbus_error_t
-mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
-               size_t len, uint8_t ttl)
+mbus_dsig_emit_locked(mbus_t *m, uint8_t signal, const void *data,
+                      size_t len, uint8_t ttl)
 {
-  pthread_mutex_lock(&m->m_mutex);
-
   const size_t reqlen = 3 + len;
 
   uint8_t req[reqlen];
@@ -469,8 +498,178 @@ mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
   req[1] = signal;
   req[2] = ttl;
   memcpy(req + 3, data, len);
-  mbus_error_t err = m->m_send(m, 0x7, req, reqlen, NULL);
+  return m->m_send(m, MBUS_OP_DSIG_EMIT, req, reqlen, NULL);
+}
 
+
+mbus_error_t
+mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
+               size_t len, uint8_t ttl)
+{
+  pthread_mutex_lock(&m->m_mutex);
+  mbus_error_t err = mbus_dsig_emit_locked(m, signal, data, len, ttl);
   pthread_mutex_unlock(&m->m_mutex);
   return err;
+}
+
+
+
+struct mbus_dsig_driver {
+  LIST_ENTRY(mbus_dsig_driver) mdd_link;
+  uint8_t mdd_signal;
+  void *mdd_data;
+  size_t mdd_length;
+  uint8_t mdd_ttl;
+  int64_t mdd_next_emit;
+};
+
+
+struct mbus_dsig_sub {
+  LIST_ENTRY(mbus_dsig_sub) mds_link;
+  uint8_t mds_signal;
+  void (*mds_cb)(void *opaque, const uint8_t *data, size_t len);
+  void *mds_opaque;
+  int64_t mds_expire;
+};
+
+
+static void *
+dsig_thread(void *aux)
+{
+  mbus_t *m = aux;
+  mbus_dsig_driver_t *mdd;
+  mbus_dsig_sub_t *mds;
+  pthread_mutex_lock(&m->m_mutex);
+
+  while(1) {
+    int64_t now = get_ts_mono();
+    int64_t next_wakeup = INT64_MAX;
+
+    LIST_FOREACH(mdd, &m->m_dsig_drivers, mdd_link) {
+      if(mdd->mdd_next_emit == 0)
+        continue;
+      if(mdd->mdd_next_emit <= now) {
+        mbus_dsig_emit_locked(m, mdd->mdd_signal,
+                              mdd->mdd_data, mdd->mdd_length, mdd->mdd_ttl);
+        if(mdd->mdd_length) {
+          mdd->mdd_next_emit = now + (1 + mdd->mdd_ttl) * 30000;
+        } else {
+          mdd->mdd_next_emit = 0;
+          continue;
+        }
+      }
+      next_wakeup = MIN(mdd->mdd_next_emit + 5000, next_wakeup);
+    }
+
+    LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
+      if(mds->mds_expire <= now) {
+        mds->mds_cb(mds->mds_opaque, NULL, 0);
+        mds->mds_expire = INT64_MAX;
+      } else if(mds->mds_expire != INT64_MAX) {
+        next_wakeup = MIN(mds->mds_expire + 1000, next_wakeup);
+      }
+    }
+
+    if(next_wakeup == INT64_MAX) {
+      pthread_cond_wait(&m->m_dsig_driver_cond, &m->m_mutex);
+    } else {
+      struct timespec ts = {.tv_sec = next_wakeup / 1000000LL,
+                            .tv_nsec = (next_wakeup % 1000000LL) * 1000};
+      pthread_cond_timedwait(&m->m_dsig_driver_cond, &m->m_mutex, &ts);
+    }
+  }
+  pthread_mutex_unlock(&m->m_mutex);
+  return NULL;
+}
+
+
+mbus_dsig_driver_t *
+mbus_dsig_drive(mbus_t *m, uint8_t signal, uint8_t ttl)
+{
+  mbus_dsig_driver_t *mdd = calloc(1, sizeof(mbus_dsig_driver_t));
+  mdd->mdd_signal = signal;
+  mdd->mdd_next_emit = 0;
+  mdd->mdd_ttl = ttl;
+  mdd->mdd_data = NULL;
+  mdd->mdd_length = 0;
+  pthread_mutex_lock(&m->m_mutex);
+  LIST_INSERT_HEAD(&m->m_dsig_drivers, mdd, mdd_link);
+  pthread_mutex_unlock(&m->m_mutex);
+  return mdd;
+}
+
+void
+mbus_dsig_set(mbus_t *m,
+              mbus_dsig_driver_t *mdd,
+              const void *data, size_t len)
+{
+  pthread_mutex_lock(&m->m_mutex);
+  free(mdd->mdd_data);
+  mdd->mdd_data = malloc(len);
+  mdd->mdd_length = len;
+  mdd->mdd_next_emit = 1;
+  memcpy(mdd->mdd_data, data, len);
+  pthread_cond_signal(&m->m_dsig_driver_cond);
+  pthread_mutex_unlock(&m->m_mutex);
+}
+
+
+void
+mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd)
+{
+  pthread_mutex_lock(&m->m_mutex);
+  if(mdd->mdd_length) {
+    free(mdd->mdd_data);
+    mdd->mdd_data = NULL;
+    mdd->mdd_length = 0;
+    mdd->mdd_next_emit = 1;
+    pthread_cond_signal(&m->m_dsig_driver_cond);
+  }
+  pthread_mutex_unlock(&m->m_mutex);
+}
+
+
+mbus_dsig_sub_t *
+mbus_dsig_sub(mbus_t *m,
+              uint8_t signal,
+              void (*cb)(void *opaque, const uint8_t *data, size_t len),
+              void *opaque)
+{
+  mbus_dsig_sub_t *mds = calloc(1, sizeof(mbus_dsig_sub_t));
+  mds->mds_signal = signal;
+  mds->mds_cb = cb;
+  mds->mds_opaque = opaque;
+  mds->mds_expire = INT64_MAX;
+  pthread_mutex_lock(&m->m_mutex);
+  LIST_INSERT_HEAD(&m->m_dsig_subs, mds, mds_link);
+  pthread_mutex_unlock(&m->m_mutex);
+  return mds;
+}
+
+
+static void
+dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
+{
+  mbus_dsig_sub_t *mds;
+  if(len < 2)
+    return;
+
+  uint8_t signal = pkt[0];
+  uint8_t ttl = pkt[1];
+
+  pkt += 2;
+  len -= 2;
+
+  int64_t now = get_ts_mono();
+
+  pthread_mutex_lock(&m->m_mutex);
+  LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
+    if(mds->mds_signal != signal)
+      continue;
+
+    mds->mds_cb(mds->mds_opaque, pkt, len);
+    mds->mds_expire = now + ttl * 100000;
+    pthread_cond_signal(&m->m_dsig_driver_cond);
+  }
+  pthread_mutex_unlock(&m->m_mutex);
 }

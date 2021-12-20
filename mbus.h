@@ -1,5 +1,12 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if 0
+}
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/time.h>
@@ -10,7 +17,7 @@
 #define MBUS_OP_PUB_DATA 3
 
 #define MBUS_OP_DSIG_EMIT  7
-// [u8 signal] [u8 valid] [...]
+// [u8 signal] [u8 ttl] [data ...]
 
 #define MBUS_OP_RPC_RESOLVE 8
 // [u8 txid] [name ...]
@@ -77,11 +84,25 @@ typedef struct mbus_dsig_sub mbus_dsig_sub_t;
 
 mbus_dsig_sub_t *mbus_dsig_sub(mbus_t *m,
                                uint8_t signal,
-                               void (*cb)(void *opaque, const void *data,
+                               void (*cb)(void *opaque, const uint8_t *data,
                                           size_t len),
                                void *opaque);
 
 mbus_error_t  mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
                              size_t len, uint8_t ttl);
 
+typedef struct mbus_dsig_driver mbus_dsig_driver_t;
+
+mbus_dsig_driver_t *mbus_dsig_drive(mbus_t *m, uint8_t signal, uint8_t ttl);
+
+void mbus_dsig_set(mbus_t *m,
+                   mbus_dsig_driver_t *mdd,
+                   const void *data, size_t len);
+
+void mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd);
+
 void mbus_destroy(mbus_t *mbus);
+
+#ifdef __cplusplus
+}
+#endif

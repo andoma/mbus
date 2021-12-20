@@ -20,7 +20,16 @@ typedef struct mbus {
 
   void (*m_destroy)(struct mbus *m);
 
+  pthread_t m_dsig_thread;
+  pthread_cond_t m_dsig_driver_cond;
+
+  LIST_HEAD(, mbus_dsig_driver) m_dsig_drivers;
+  LIST_HEAD(, mbus_dsig_sub) m_dsig_subs;
+
 } mbus_t;
+
+
+void mbus_init_common(mbus_t *m);
 
 uint32_t mbus_crc32(uint32_t crc, const void *data, size_t n_bytes);
 
