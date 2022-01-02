@@ -56,7 +56,8 @@ typedef enum {
     MBUS_ERR_CHECKSUM_ERROR = -18,
     MBUS_ERR_MALFORMED = -19,
     MBUS_ERR_INVALID_RPC_ID = -20,
-
+    ERR_INVALID_RPC_ARGS      = -21,
+    ERR_NO_FLASH_SPACE        = -22,
 } mbus_error_t;
 
 typedef enum {
@@ -72,7 +73,7 @@ mbus_t *mbus_create_usb(uint16_t vid, uint16_t pid, const char *serial,
                         void *aux);
 
 mbus_t *mbus_create_serial(const char *device, int baudrate,
-                           uint8_t local_addr);
+                           uint8_t local_addr, int full_duplex);
 
 mbus_error_t mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
                          const void *req, size_t req_size, void *reply,

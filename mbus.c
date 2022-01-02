@@ -395,7 +395,6 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
 
     err = mbus_invoke_id(m, addr, method_id, req, req_size, reply, reply_size,
                          deadline);
-    printf("err=%d\n", err);
     if(err == MBUS_ERR_INVALID_RPC_ID)
       continue;
     return err;
@@ -483,6 +482,10 @@ mbus_error_to_string(mbus_error_t err)
     return "MALFORMED";
   case MBUS_ERR_INVALID_RPC_ID:
     return "INVALID_RPC_ID";
+  case ERR_INVALID_RPC_ARGS:
+    return "INVALID_RPC_ARGS";
+  case ERR_NO_FLASH_SPACE:
+    return "NO_FLASH_SPACE";
   }
   return "???";
 }

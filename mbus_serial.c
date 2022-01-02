@@ -155,6 +155,7 @@ setupdev(mbus_serial_t *ms, int baudrate)
     return -1;
   }
 
+#if 0
   struct serial_struct serial;
   if(ioctl(ms->ms_fd, TIOCGSERIAL, &serial)) {
     perror("TIOCGSERIAL");
@@ -165,7 +166,7 @@ setupdev(mbus_serial_t *ms, int baudrate)
     perror("TIOCSSERIAL");
     return -1;
   }
-
+#endif
 
   set_nonblocking(ms->ms_fd, 1);
   return 0;
@@ -220,9 +221,18 @@ mbus_set_state(mbus_serial_t *ms, int state, const char *reason)
 }
 
 
-static void
-mbus_serial_xmit(mbus_serial_t *ms, const uint8_t *data, size_t len)
+static mbus_packet_t *
+encode_packet(const uint8_t *data, size_t len, const mbus_t *m, uint8_t addr)
 {
+  uint8_t buf[1 + len + 4];
+  buf[0] = (m->m_our_addr << 4) | addr;
+  memcpy(buf + 1, data, len);
+  uint32_t crc = ~mbus_crc32(0, buf, 1 + len);
+  memcpy(buf + 1 + len, &crc, 4);
+
+  data = buf;
+  len += 1 + 4;
+
   size_t plen = 2;
   for(size_t i = 0; i < len; i++) {
     plen += 1 + (data[i] == 0x7e || data[i] == 0x7d);
@@ -245,25 +255,21 @@ mbus_serial_xmit(mbus_serial_t *ms, const uint8_t *data, size_t len)
     }
   }
   out[op++] = 0x7e;
+  return mp;
+}
 
+
+static mbus_error_t
+mbus_serial_send_hd(mbus_t *m, uint8_t addr, const void *data,
+                    size_t len, const struct timespec *deadline)
+{
+  mbus_packet_t *mp = encode_packet(data, len, m, addr);
+
+  mbus_serial_t *ms = (mbus_serial_t *)m;
   pthread_mutex_lock(&ms->ms_mpq_mutex);
   TAILQ_INSERT_TAIL(&ms->ms_mpq, mp, mp_link);
   pthread_mutex_unlock(&ms->ms_mpq_mutex);
   wakeup(ms, 't');
-}
-
-
-
-static mbus_error_t
-mbus_serial_send(mbus_t *m, uint8_t addr, const void *data,
-                 size_t len, const struct timespec *deadline)
-{
-  uint8_t buf[1 + len + 4];
-  buf[0] = (m->m_our_addr << 4) | addr;
-  memcpy(buf + 1, data, len);
-  uint32_t crc = ~mbus_crc32(0, buf, 1 + len);
-  memcpy(buf + 1 + len, &crc, 4);
-  mbus_serial_xmit((mbus_serial_t *)m, buf, 1 + len + 4);
   return 0;
 }
 
@@ -333,7 +339,6 @@ mbus_bus_tx(mbus_serial_t *ms)
     mbus_set_state(ms, MBUS_STATE_RX, "tx: write-fail");
     return 0;
   }
-
   uint8_t bounce[mp->mp_size];
   size_t echo_rx_size = 0;
 
@@ -461,10 +466,24 @@ mbus_thread(void *arg)
   return NULL;
 }
 
+static mbus_error_t
+mbus_serial_send_fd(mbus_t *m, uint8_t addr, const void *data,
+                    size_t len, const struct timespec *deadline)
+{
+  mbus_serial_t *ms = (mbus_serial_t *)m;
+  mbus_packet_t *mp = encode_packet(data, len, m, addr);
+  mbus_error_t err = 0;
+  if(write(ms->ms_fd, mp->mp_data, mp->mp_size) != mp->mp_size) {
+    err = MBUS_ERR_TX;
+  }
+  free(mp);
+  return err;
+}
+
 
 mbus_t *
 mbus_create_serial(const char *device, int baudrate,
-                   uint8_t local_addr)
+                   uint8_t local_addr, int full_duplex)
 {
   int fd = open(device, O_RDWR | O_NOCTTY);
   if(fd == -1) {
@@ -492,7 +511,7 @@ mbus_create_serial(const char *device, int baudrate,
   TAILQ_INIT(&ms->ms_mpq);
 
   ms->m.m_our_addr = local_addr;
-  ms->m.m_send = mbus_serial_send;
+  ms->m.m_send = full_duplex ? mbus_serial_send_fd : mbus_serial_send_hd;
   ms->m.m_destroy = mbus_serial_destroy;
 
   mbus_init_common(&ms->m);
