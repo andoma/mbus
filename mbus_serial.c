@@ -423,7 +423,9 @@ mbus_bus_rx(mbus_serial_t *ms)
   if(c == 0x7e) {
     if(ms->ms_rxlen) {
       hdlc_decode(ms);
-      mbus_rx_handle_pkt(&ms->m, ms->ms_rxbuf, ms->ms_rxlen);
+      pthread_mutex_lock(&ms->m.m_mutex);
+      mbus_rx_handle_pkt(&ms->m, ms->ms_rxbuf, ms->ms_rxlen, 1);
+      pthread_mutex_unlock(&ms->m.m_mutex);
     }
 
     ms->ms_rxlen = 0;

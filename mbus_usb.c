@@ -144,7 +144,7 @@ mbus_thread(void *arg)
           break;
 
         pthread_mutex_lock(&mu->m.m_mutex);
-        mbus_rx_handle_pkt(&mu->m, pkt, actual_length);
+        mbus_rx_handle_pkt(&mu->m, pkt, actual_length, 1);
         pthread_mutex_unlock(&mu->m.m_mutex);
       }
 

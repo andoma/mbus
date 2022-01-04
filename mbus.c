@@ -10,6 +10,30 @@
 #include <sys/queue.h>
 #include <unistd.h>
 
+#include "mbus_gateway.h"
+
+static int64_t
+get_ts_mono(void)
+{
+  struct timespec tv;
+  clock_gettime(CLOCK_MONOTONIC, &tv);
+  return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
+}
+
+static struct timespec
+usec_to_timespec(uint64_t ts)
+{
+  return (struct timespec){.tv_sec = ts / 1000000LL,
+                           .tv_nsec = (ts % 1000000LL) * 1000};
+}
+
+
+static struct timespec
+mbus_deadline_from_timeout(int timeout_ms)
+{
+  int64_t when = get_ts_mono() + timeout_ms * 1000;
+  return usec_to_timespec(when);
+}
 
 static void __attribute__((unused))
 hexdump(const char *pfx, const void* data_, int len)
@@ -124,6 +148,45 @@ static void *dsig_thread(void *aux);
 static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len);
 
 
+pcs_iface_t *
+mbus_get_pcs_iface(mbus_t *m)
+{
+  return m->m_pcs;
+}
+
+
+
+
+static int64_t
+pcs_thread_wait_helper(pthread_cond_t *c,
+                       pthread_mutex_t *m,
+                       int64_t deadline)
+{
+  struct timespec ts = usec_to_timespec(deadline);
+  pthread_cond_timedwait(c, m, &ts);
+  return get_ts_mono();
+}
+
+
+static void *
+pcs_thread(void *arg)
+{
+  mbus_t *m = arg;
+  uint8_t txbuf[64];
+
+
+  while(1) {
+    pcs_poll_result_t ppr = pcs_wait(m->m_pcs, txbuf, sizeof(txbuf),
+                                     get_ts_mono(), pcs_thread_wait_helper);
+
+    pthread_mutex_lock(&m->m_mutex);
+    m->m_send(m, ppr.addr, txbuf, ppr.len, NULL);
+    pthread_mutex_unlock(&m->m_mutex);
+  }
+  return NULL;
+}
+
+
 void
 mbus_init_common(mbus_t *m)
 {
@@ -134,6 +197,11 @@ mbus_init_common(mbus_t *m)
   pthread_condattr_destroy(&attr);
 
   pthread_create(&m->m_dsig_thread, NULL, dsig_thread, m);
+
+  m->m_pcs = pcs_iface_create(m, 64, NULL);
+
+  pthread_create(&m->m_pcs_thread, NULL, pcs_thread, m);
+
 }
 
 void
@@ -181,22 +249,40 @@ mbus_cancel_rpc(mbus_t *m)
 
 
 void
-mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len)
+mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 {
-  if(~mbus_crc32(0, pkt, len)) {
-    hexdump("CRCERR", pkt, len);
+  if(check_crc) {
+    if(len < 4 || ~mbus_crc32(0, pkt, len))
+      return;
+
+    len -= 4;
+  }
+
+  if(len < 2) {
     return;
   }
-  if(len < 6) {
-    printf("SHORT PKT\n");
-    return;
-  }
+
   uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
-  //  uint8_t dst_addr = pkt[0] & 0x0f;
+  uint8_t dst_addr = pkt[0] & 0x0f;
+
+  if(dst_addr != m->m_our_addr && dst_addr != 7)
+    return;
+
+  if(m->m_gateway && mbus_gateway_intercept(m, pkt, len)) {
+    return;
+  }
+
+  if(pkt[1] & 0x80 && dst_addr == m->m_our_addr) {
+    // PCS
+    pcs_input(m->m_pcs, pkt + 1, len - 1, get_ts_mono(), src_addr);
+    return;
+  }
+
   uint8_t opcode = pkt[1] & 0x0f;
 
+  /* Remove header */;
   pkt += 2;
-  len -= 2 /* HDR */ + 4 /* CRC */;
+  len -= 2;
 
   mbus_rpc_t* mr;
 
@@ -403,23 +489,6 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
 }
 
 
-static int64_t
-get_ts_mono(void)
-{
-  struct timespec tv;
-  clock_gettime(CLOCK_MONOTONIC, &tv);
-  return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
-}
-
-
-static struct timespec
-mbus_deadline_from_timeout(int timeout_ms)
-{
-  int64_t when = get_ts_mono() + timeout_ms * 1000;
-  struct timespec ts = {.tv_sec = when / 1000000LL,
-                        .tv_nsec = (when % 1000000LL) * 1000};
-  return ts;
-}
 
 
 mbus_error_t
@@ -501,7 +570,7 @@ mbus_dsig_emit_locked(mbus_t *m, uint8_t signal, const void *data,
   req[1] = signal;
   req[2] = ttl;
   memcpy(req + 3, data, len);
-  return m->m_send(m, MBUS_OP_DSIG_EMIT, req, reqlen, NULL);
+  return m->m_send(m, 0x7, req, reqlen, NULL);
 }
 
 

@@ -1,0 +1,116 @@
+#include "mbus_i.h"
+
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+
+
+
+typedef struct mbus_tcp {
+  mbus_t m;
+  pthread_t mt_tid;
+  int mt_fd;
+
+} mbus_tcp_t;
+
+static mbus_error_t
+mbus_tcp_send(mbus_t *m, uint8_t addr, const void *data,
+              size_t len, const struct timespec *deadline)
+{
+  mbus_tcp_t *mt = (mbus_tcp_t *)m;
+
+  uint8_t pkt[len + 2];
+
+  pkt[0] = len + 1;
+  pkt[1] = (mt->m.m_our_addr << 4) | addr;
+  memcpy(pkt + 2, data, len);
+  mbus_error_t err = 0;
+  if(write(mt->mt_fd, pkt, len + 2) != len + 2) {
+    err = MBUS_ERR_TX;
+  }
+  return err;
+}
+
+
+static void *
+tcp_rx_thread(void *arg)
+{
+  mbus_tcp_t *mt = arg;
+
+  uint8_t plen;
+  uint8_t pkt[256];
+
+  while(1) {
+    if(read(mt->mt_fd, &plen, 1) != 1)
+      break;
+
+    if(read(mt->mt_fd, pkt, plen) != plen)
+      break;
+
+    pthread_mutex_lock(&mt->m.m_mutex);
+    mbus_rx_handle_pkt(&mt->m, pkt, plen, 0);
+    pthread_mutex_unlock(&mt->m.m_mutex);
+  }
+  return NULL;
+}
+
+
+
+static mbus_t *
+mbus_create_tcp2(const char *host, int port, uint8_t local_addr)
+{
+  fprintf(stderr, "* Gateway connecting to %s:%d\n",
+          host, port);
+
+  struct sockaddr_in remoteaddr = {
+    .sin_family = AF_INET,
+    .sin_port = htons(port),
+    .sin_addr.s_addr = inet_addr(host),
+  };
+
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+  if(connect(fd, (struct sockaddr *)&remoteaddr, sizeof(remoteaddr)) < 0) {
+    perror("connect");
+    return NULL;
+  }
+
+  mbus_tcp_t *mt = calloc(1, sizeof(mbus_tcp_t));
+  mt->mt_fd = fd;
+
+  mt->m.m_our_addr = local_addr;
+  mt->m.m_send = mbus_tcp_send;
+
+  mbus_init_common(&mt->m);
+
+
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+  pthread_create(&mt->mt_tid, &attr, tcp_rx_thread, mt);
+
+  return &mt->m;
+}
+
+mbus_t *
+mbus_create_tcp(const char *addr, uint8_t local_addr)
+{
+  char *copy = strdup(addr);
+
+  char *port = strchr(copy, ':');
+  if(port == NULL) {
+    fprintf(stderr, "TCP connection not in form addr:port");
+    free(copy);
+    return NULL;
+  }
+
+  *port++ = 0;
+  mbus_t *m = mbus_create_tcp2(copy, atoi(port), local_addr);
+  free(copy);
+  return m;
+}

@@ -11,6 +11,8 @@ extern "C" {
 #include <stdint.h>
 #include <sys/time.h>
 
+#include "pcs/pcs.h"
+
 #define MBUS_OP_PING 0
 #define MBUS_OP_PONG 1
 #define MBUS_OP_PUB_META 2
@@ -75,6 +77,8 @@ mbus_t *mbus_create_usb(uint16_t vid, uint16_t pid, const char *serial,
 mbus_t *mbus_create_serial(const char *device, int baudrate,
                            uint8_t local_addr, int full_duplex);
 
+mbus_t *mbus_create_tcp(const char *addr, uint8_t local_addr);
+
 mbus_error_t mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
                          const void *req, size_t req_size, void *reply,
                          size_t *reply_size, int timeout_ms);
@@ -102,7 +106,10 @@ void mbus_dsig_set(mbus_t *m,
 
 void mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd);
 
+pcs_iface_t *mbus_get_pcs_iface(mbus_t *m);
+
 void mbus_destroy(mbus_t *mbus);
+
 
 #ifdef __cplusplus
 }

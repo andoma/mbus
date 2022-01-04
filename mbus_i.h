@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mbus.h"
 #include <sys/queue.h>
 #include <pthread.h>
 
@@ -26,6 +27,11 @@ typedef struct mbus {
   LIST_HEAD(, mbus_dsig_driver) m_dsig_drivers;
   LIST_HEAD(, mbus_dsig_sub) m_dsig_subs;
 
+  pcs_iface_t *m_pcs;
+  pthread_t m_pcs_thread;
+
+  struct mbus_gateway *m_gateway;
+
 } mbus_t;
 
 
@@ -33,6 +39,7 @@ void mbus_init_common(mbus_t *m);
 
 uint32_t mbus_crc32(uint32_t crc, const void *data, size_t n_bytes);
 
-void mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len);
+void mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len,
+                        int check_crc);
 
 void mbus_cancel_rpc(mbus_t *m);
