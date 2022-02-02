@@ -9,7 +9,10 @@ SRCS += \
 	remote_shell.c \
 	main.c
 
-LDFLAGS += -lusb-1.0 -lpthread
+CFLAGS += ${shell pkg-config --cflags libusb-1.0}
+LDFLAGS += ${shell pkg-config --libs libusb-1.0}
+
+LDFLAGS += -lpthread
 
 test: Makefile mbus.h ${SRCS}
-	gcc -O2 -Wall -Werror -o $@ ${SRCS} ${LDFLAGS}
+	gcc -O2 -Wall -Werror -o $@ ${CFLAGS} ${SRCS} ${LDFLAGS}

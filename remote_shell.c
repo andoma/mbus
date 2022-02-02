@@ -5,16 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static int64_t
-get_ts_mono(void)
-{
-  struct timespec tv;
-  clock_gettime(CLOCK_MONOTONIC, &tv);
-  return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
-}
-
-
-
 static void *
 send_thread(void *arg)
 {
@@ -54,7 +44,7 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr)
 
   printf("* Exit with ^B\n");
 
-  pcs_t *pcs = pcs_connect(pi, 0x80, get_ts_mono(), target_addr);
+  pcs_t *pcs = pcs_connect(pi, 0x80, mbus_get_ts(), target_addr);
 
   if(tcgetattr(0, &termio) == -1) {
     perror("tcgetattr");

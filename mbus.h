@@ -69,6 +69,8 @@ typedef enum {
 
 typedef struct mbus mbus_t;
 
+int64_t mbus_get_ts(void);
+
 mbus_t *mbus_create_usb(uint16_t vid, uint16_t pid, const char *serial,
                         uint8_t local_addr,
                         void (*status_cb)(void *aux, mbus_status_t status),
@@ -109,6 +111,7 @@ void mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd);
 pcs_iface_t *mbus_get_pcs_iface(mbus_t *m);
 
 void mbus_destroy(mbus_t *mbus);
+
 
 
 #ifdef __cplusplus

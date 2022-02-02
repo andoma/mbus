@@ -12,12 +12,18 @@
 
 #include "mbus_gateway.h"
 
-static int64_t
-get_ts_mono(void)
+int64_t
+mbus_get_ts(void)
 {
+#ifdef __linux__
   struct timespec tv;
   clock_gettime(CLOCK_MONOTONIC, &tv);
   return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
+#else
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (int64_t)tv.tv_sec * 1000000LL + tv.tv_usec;
+#endif
 }
 
 static struct timespec
@@ -31,7 +37,7 @@ usec_to_timespec(uint64_t ts)
 static struct timespec
 mbus_deadline_from_timeout(int timeout_ms)
 {
-  int64_t when = get_ts_mono() + timeout_ms * 1000;
+  int64_t when = mbus_get_ts() + timeout_ms * 1000;
   return usec_to_timespec(when);
 }
 
@@ -164,7 +170,7 @@ pcs_thread_wait_helper(pthread_cond_t *c,
 {
   struct timespec ts = usec_to_timespec(deadline);
   pthread_cond_timedwait(c, m, &ts);
-  return get_ts_mono();
+  return mbus_get_ts();
 }
 
 
@@ -177,7 +183,7 @@ pcs_thread(void *arg)
 
   while(1) {
     pcs_poll_result_t ppr = pcs_wait(m->m_pcs, txbuf, sizeof(txbuf),
-                                     get_ts_mono(), pcs_thread_wait_helper);
+                                     mbus_get_ts(), pcs_thread_wait_helper);
 
     pthread_mutex_lock(&m->m_mutex);
     m->m_send(m, ppr.addr, txbuf, ppr.len, NULL);
@@ -192,7 +198,9 @@ mbus_init_common(mbus_t *m)
 {
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
+#ifdef __linux__
   pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+#endif
   pthread_cond_init(&m->m_dsig_driver_cond, &attr);
   pthread_condattr_destroy(&attr);
 
@@ -274,7 +282,7 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 
   if(pkt[1] & 0x80 && dst_addr == m->m_our_addr) {
     // PCS
-    pcs_input(m->m_pcs, pkt + 1, len - 1, get_ts_mono(), src_addr);
+    pcs_input(m->m_pcs, pkt + 1, len - 1, mbus_get_ts(), src_addr);
     return;
   }
 
@@ -356,7 +364,9 @@ mbus_rpc_init(mbus_rpc_t* mr, mbus_t *m, uint8_t addr)
 
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
+#ifdef __linux__
   pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+#endif
   pthread_cond_init(&mr->mr_cond, &attr);
   pthread_condattr_destroy(&attr);
 
@@ -614,7 +624,7 @@ dsig_thread(void *aux)
   pthread_mutex_lock(&m->m_mutex);
 
   while(1) {
-    int64_t now = get_ts_mono();
+    int64_t now = mbus_get_ts();
     int64_t next_wakeup = INT64_MAX;
 
     LIST_FOREACH(mdd, &m->m_dsig_drivers, mdd_link) {
@@ -732,7 +742,7 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
   pkt += 2;
   len -= 2;
 
-  int64_t now = get_ts_mono();
+  int64_t now = mbus_get_ts();
 
   pthread_mutex_lock(&m->m_mutex);
   LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {

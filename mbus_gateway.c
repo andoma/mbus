@@ -9,16 +9,6 @@
 #include "mbus_i.h"
 
 
-static int64_t
-get_ts_mono(void)
-{
-  struct timespec tv;
-  clock_gettime(CLOCK_MONOTONIC, &tv);
-  return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
-}
-
-
-
 LIST_HEAD(peer_list, peer);
 LIST_HEAD(xlate_state_list, xlate_state);
 
@@ -99,7 +89,7 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
       xs->xs_peer = p;
       xs->xs_addr = bus_addr;
       xs->xs_bus_id = flowid;
-      xs->xs_deadline = get_ts_mono() + 5000000;
+      xs->xs_deadline = mbus_get_ts() + 5000000;
       LIST_INSERT_HEAD(&p->p_pcs_states, xs, xs_peer_link);
       LIST_INSERT_HEAD(&g->g_pcs_states, xs, xs_gateway_link);
 
@@ -109,7 +99,7 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
 
       LIST_FOREACH(xs, &p->p_pcs_states, xs_peer_link) {
         if(xs->xs_addr == bus_addr && xs->xs_bus_id == flowid) {
-          xs->xs_deadline = get_ts_mono() + 5000000;
+          xs->xs_deadline = mbus_get_ts() + 5000000;
           m->m_send(m, xs->xs_addr, pkt + 1, len - 1, NULL);
           return;
         }
@@ -136,7 +126,7 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
     LIST_INSERT_HEAD(&p->p_rpc_states, xs, xs_peer_link);
     LIST_INSERT_HEAD(&g->g_rpc_states, xs, xs_gateway_link);
 
-    xs->xs_deadline = get_ts_mono() + 5000000;
+    xs->xs_deadline = mbus_get_ts() + 5000000;
 
     xs->xs_bus_id = ++m->m_txid_gen[xs->xs_addr & 0xf];
     xs->xs_peer_id = pkt[2];
@@ -215,7 +205,7 @@ janitor(void *arg)
 
   while(1) {
     sleep(1);
-    int64_t now = get_ts_mono();
+    int64_t now = mbus_get_ts();
     expire_list(&g->g_rpc_states, now);
     expire_list(&g->g_pcs_states, now);
   }

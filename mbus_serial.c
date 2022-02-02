@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <termios.h>
 
-#include <linux/serial.h>
+//#include <linux/serial.h>
 
 static void __attribute__((unused))
 hexdump(const char *pfx, const void* data_, int len)
@@ -120,24 +120,11 @@ setupdev(mbus_serial_t *ms, int baudrate)
   case 230400:
     cflags |= B230400;
     break;
-  case 460800:
-    cflags |= B460800;
-    break;
-  case 500000:
-    cflags |= B500000;
-    break;
-  case 576000:
-    cflags |= B576000;
-    break;
+#ifdef B921600
   case 921600:
     cflags |= B921600;
     break;
-  case 1000000:
-    cflags |= B1000000;
-    break;
-  case 1152000:
-    cflags |= B1152000;
-    break;
+#endif
   default:
     fprintf(stderr, "Baudrate %d not supported\n", baudrate);
     return -1;
@@ -178,22 +165,11 @@ wakeup(mbus_serial_t *ms, char code)
   if(write(ms->ms_pipe[1], &code, 1)) {}
 }
 
-
-
-int64_t
-get_ts_mono(void)
-{
-  struct timespec tv;
-  clock_gettime(CLOCK_MONOTONIC, &tv);
-  return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
-}
-
-
 static int __attribute__((unused))
 get_delta_time(void)
 {
   int r = 0;
-  int64_t now = get_ts_mono();
+  int64_t now = mbus_get_ts();
   static int64_t prev;
   if(prev == 0)
     r = 0;
@@ -502,13 +478,21 @@ mbus_create_serial(const char *device, int baudrate,
     return NULL;
   }
 
-
+#ifdef __linux__
   if(pipe2(ms->ms_pipe, O_CLOEXEC)) {
     perror("pipe");
     close(fd);
     free(ms);
     return NULL;
   }
+#else
+  if(pipe(ms->ms_pipe)) {
+    perror("pipe");
+    close(fd);
+    free(ms);
+    return NULL;
+  }
+#endif
 
   TAILQ_INIT(&ms->ms_mpq);
 

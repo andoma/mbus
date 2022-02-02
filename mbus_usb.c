@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 
 typedef struct {
   mbus_t m;
@@ -184,7 +184,9 @@ mbus_create_usb(uint16_t vid, uint16_t pid, const char *serial,
 
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
+#ifdef __linux__
   pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+#endif
   pthread_cond_init(&mu->mu_handle_cond, &attr);
   pthread_condattr_destroy(&attr);
 
