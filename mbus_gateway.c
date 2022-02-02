@@ -1,5 +1,3 @@
-#include "gateway.h"
-
 #include <stdlib.h>
 #include <sys/queue.h>
 #include <netinet/in.h>
