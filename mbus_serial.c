@@ -199,7 +199,6 @@ mbus_set_state(mbus_serial_t *ms, int state, const char *reason)
          get_delta_time(),
          state == MBUS_STATE_IDLE ? "IDLE" :
          state == MBUS_STATE_TX   ? "TX" :
-         state == MBUS_STATE_GAP  ? "GAP" :
          state == MBUS_STATE_RX   ? "RX" : "???",
          reason);
 #endif
