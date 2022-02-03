@@ -252,6 +252,8 @@ mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
   mu->m.m_send = mbus_usb_send;
   mu->m.m_destroy = mbus_usb_destroy;
 
+  mbus_init_common(&mu->m);
+
   pthread_create(&mu->mu_tid, NULL, mbus_thread, mu);
   return &mu->m;
 }
