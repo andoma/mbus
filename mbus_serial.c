@@ -323,7 +323,7 @@ mbus_bus_tx(mbus_serial_t *ms)
     struct pollfd pfd[1];
     pfd[0].fd = ms->ms_fd;
     pfd[0].events = POLLIN;
-    int r = poll(pfd, 1, 10);
+    int r = poll(pfd, 1, 20);
     if(r != 1) {
       set_txe(ms, 0);
       mbus_set_state(ms, MBUS_STATE_RX, "tx: Read timeout");
@@ -381,15 +381,15 @@ mbus_bus_rx(mbus_serial_t *ms)
 
   pfd[0].fd = ms->ms_fd;
   pfd[0].events = POLLIN;
-  int r = poll(pfd, 1, 10);
+  int r = poll(pfd, 1, 18 + rand() % 10);
   if(r == -1) {
     perror("poll");
     return -1;
   }
 
-  if(r == 0)
+  if(r == 0) {
     return mbus_bus_tx(ms);
-
+  }
   uint8_t c;
   r = read(ms->ms_fd, &c, 1);
   if(r == -1) {
@@ -426,7 +426,7 @@ mbus_thread(void *arg)
 
   while(1) {
 
-    int r;
+    int r = 0;
     switch(ms->ms_state) {
     case MBUS_STATE_IDLE:
       r = mbus_bus_idle(ms);
