@@ -1,6 +1,7 @@
 #include "mbus.h"
 #include "mbus_i.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
@@ -14,6 +15,13 @@ typedef struct {
   libusb_context *mu_ctx;
   uint16_t mu_vid;
   uint16_t mu_pid;
+
+  int mu_interface;
+  int mu_IN_endpoint;
+  int mu_OUT_endpoint;
+
+  int mu_mbus_vendor_subclass;
+
   char *mu_serial;
   pthread_cond_t mu_handle_cond;
 
@@ -53,7 +61,7 @@ mbus_usb_send(mbus_t *m, uint8_t addr, const void *data,
       return MBUS_ERR_NO_DEVICE;
     }
   }
-  if(mbus_xmit(mu->mu_handle, 0x1, data, len, addr, m->m_our_addr)) {
+  if(mbus_xmit(mu->mu_handle, mu->mu_OUT_endpoint, data, len, addr, m->m_our_addr)) {
     return MBUS_ERR_TX;
   }
 
@@ -83,6 +91,43 @@ mbus_usb_open(mbus_usb_t *mu)
       if(desc.idVendor != mu->mu_vid || desc.idProduct != mu->mu_pid)
         continue;
     }
+
+
+    struct libusb_config_descriptor *cfg_desc;
+    r = libusb_get_active_config_descriptor(dev, &cfg_desc);
+    if(r < 0)
+      continue;
+
+    mu->mu_interface = -1;
+
+    for(int i = 0 ; i < cfg_desc->bNumInterfaces; i++) {
+      for(int j = 0 ; j < cfg_desc->interface[i].num_altsetting; j++) {
+        if(cfg_desc->interface[i].altsetting[j].bInterfaceClass == 255 &&
+           cfg_desc->interface[i].altsetting[j].bInterfaceSubClass == mu->mu_mbus_vendor_subclass) {
+
+          mu->mu_IN_endpoint = -1;
+          mu->mu_OUT_endpoint = -1;
+
+          for(int k = 0 ; k < cfg_desc->interface[i].altsetting[j].bNumEndpoints; k++) {
+            if(cfg_desc->interface[i].altsetting[j].endpoint[k].bEndpointAddress & 0x80) {
+              mu->mu_IN_endpoint = cfg_desc->interface[i].altsetting[j].endpoint[k].bEndpointAddress;
+            }
+            if(!(cfg_desc->interface[i].altsetting[j].endpoint[k].bEndpointAddress & 0x80)) {
+              mu->mu_OUT_endpoint = cfg_desc->interface[i].altsetting[j].endpoint[k].bEndpointAddress;
+            }
+          }
+          if(mu->mu_IN_endpoint != -1 && mu->mu_OUT_endpoint != -1)
+            mu->mu_interface = cfg_desc->interface[i].altsetting[j].bInterfaceNumber;
+          break;
+        }
+      }
+      if(mu->mu_interface != -1)
+        break;
+    }
+    libusb_free_config_descriptor(cfg_desc);
+
+    if(mu->mu_interface == -1)
+      continue;
 
     r = libusb_open(dev, &dev_handle);
     if(r < 0)
@@ -125,7 +170,9 @@ mbus_thread(void *arg)
 
     struct libusb_device_handle* dh = mbus_usb_open(mu);
     if(dh != NULL) {
-      libusb_claim_interface(dh, 0);
+      printf("MBUS @ USB-Interface:%d IN:0x%02x OUT:0x%02x\n",
+             mu->mu_interface, mu->mu_IN_endpoint, mu->mu_OUT_endpoint);
+      libusb_claim_interface(dh, mu->mu_interface);
 
       pthread_mutex_lock(&mu->m.m_mutex);
       mu->mu_handle = dh;
@@ -138,11 +185,16 @@ mbus_thread(void *arg)
       while (1) {
         uint8_t pkt[128];
         int actual_length = 0;
-        int r = libusb_bulk_transfer(dh, 0x81, pkt, sizeof(pkt),
-                                     &actual_length, 0);
-        if(r)
-          break;
 
+        int r = libusb_bulk_transfer(dh, mu->mu_IN_endpoint, pkt, sizeof(pkt),
+                                     &actual_length, 0);
+        if(r) {
+          if(r == LIBUSB_ERROR_PIPE)
+            continue; // Remote stalled
+          printf("bulk transfer error:%s\n",
+                 libusb_error_name(r));
+          break;
+        }
         pthread_mutex_lock(&mu->m.m_mutex);
         mbus_rx_handle_pkt(&mu->m, pkt, actual_length, 1);
         pthread_mutex_unlock(&mu->m.m_mutex);
@@ -155,6 +207,8 @@ mbus_thread(void *arg)
 
       if(mu->mu_status_cb != NULL)
         mu->mu_status_cb(mu->mu_aux, MBUS_DISCONNECTED);
+      libusb_release_interface(dh, mu->mu_interface);
+      libusb_close(dh);
     }
     usleep(100000);
     libusb_exit(mu->mu_ctx);
@@ -172,7 +226,8 @@ mbus_usb_destroy(mbus_t *m)
 
 
 mbus_t *
-mbus_create_usb(uint16_t vid, uint16_t pid, const char *serial,
+mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
+                const char *serial,
                 uint8_t local_addr,
                 void (*status_cb)(void *aux, mbus_status_t status),
                 void *aux)
@@ -181,7 +236,7 @@ mbus_create_usb(uint16_t vid, uint16_t pid, const char *serial,
   mu->mu_status_cb = status_cb;
   mu->mu_aux = aux;
   mu->m.m_our_addr = local_addr;
-
+  mu->mu_mbus_vendor_subclass = vendor_subclass;
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
 #ifdef __linux__
