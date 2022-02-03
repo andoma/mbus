@@ -15,4 +15,4 @@ LDFLAGS += ${shell pkg-config --libs libusb-1.0}
 LDFLAGS += -lpthread
 
 test: Makefile mbus.h ${SRCS}
-	gcc -O2 -Wall -Werror -o $@ ${CFLAGS} ${SRCS} ${LDFLAGS}
+	gcc -O2 -g -Wall -Werror -o $@ ${CFLAGS} ${SRCS} ${LDFLAGS}
