@@ -72,7 +72,11 @@ mbus_create_from_constr(const char *str0, uint8_t local_addr)
 }
 
 
-
+void
+mbus_set_debug_level(mbus_t *m, int level)
+{
+  m->m_debug_level = level;
+}
 
 
 int64_t
@@ -323,9 +327,12 @@ void
 mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 {
   if(check_crc) {
-    if(len < 4 || ~mbus_crc32(0, pkt, len))
+    if(len < 4 || ~mbus_crc32(0, pkt, len)) {
+      if(m->m_debug_level >= 1) {
+        printf("RX: CRC ERROR\n");
+      }
       return;
-
+    }
     len -= 4;
   }
 
@@ -335,6 +342,13 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 
   uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
   uint8_t dst_addr = pkt[0] & 0x0f;
+
+  if(m->m_debug_level >= 1) {
+    printf("RX: 0x%x -> 0x%x\n", src_addr, dst_addr);
+    if(m->m_debug_level >= 2) {
+      hexdump("RX", pkt, len);
+    }
+  }
 
   if(dst_addr != m->m_our_addr && dst_addr != 7)
     return;

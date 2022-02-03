@@ -14,10 +14,10 @@ main(int argc, char **argv)
   const char *connect_to = NULL;
   int local_addr = 15;
   int target_addr = 1;
-
+  int debug_level = 0;
   srand(time(NULL) & getpid());
 
-  while ((opt = getopt(argc, argv, "c:t:l:")) != -1) {
+  while ((opt = getopt(argc, argv, "c:t:l:d:")) != -1) {
     switch(opt) {
     case 'l':
       local_addr = atoi(argv[1]);
@@ -27,6 +27,9 @@ main(int argc, char **argv)
       break;
     case 't':
       target_addr = atoi(optarg);
+      break;
+    case 'd':
+      debug_level = atoi(optarg);
       break;
     }
   }
@@ -40,6 +43,8 @@ main(int argc, char **argv)
     fprintf(stderr, "Failed to create mbus connection\n");
     exit(1);
   }
+
+  mbus_set_debug_level(m, debug_level);
 
   argc -= optind;
   argv += optind;

@@ -32,6 +32,8 @@ typedef struct mbus {
 
   struct mbus_gateway *m_gateway;
 
+  int m_debug_level;
+
 } mbus_t;
 
 

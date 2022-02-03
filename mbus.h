@@ -71,6 +71,8 @@ typedef struct mbus mbus_t;
 
 int64_t mbus_get_ts(void);
 
+void mbus_set_debug_level(mbus_t *m, int level);
+
 mbus_t *mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
                         const char *serial, uint8_t local_addr,
                         void (*status_cb)(void *aux, mbus_status_t status),
