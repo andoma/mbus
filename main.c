@@ -11,39 +11,34 @@ int
 main(int argc, char **argv)
 {
   int opt;
-  const char *device = NULL;
   const char *connect_to = NULL;
   int local_addr = 15;
-  int full_duplex = 0;
   int target_addr = 1;
 
   srand(time(NULL) & getpid());
 
-  while ((opt = getopt(argc, argv, "d:ft:c:")) != -1) {
+  while ((opt = getopt(argc, argv, "c:t:l:")) != -1) {
     switch(opt) {
-    case 'd':
-      device = optarg;
-      break;
-    case 'f':
-      full_duplex = 1;
-      break;
-    case 't':
-      target_addr = atoi(optarg);
+    case 'l':
+      local_addr = atoi(argv[1]);
       break;
     case 'c':
       connect_to = optarg;
       break;
+    case 't':
+      target_addr = atoi(optarg);
+      break;
     }
   }
 
-  mbus_t *m;
-  if(connect_to != NULL) {
-    m = mbus_create_tcp(connect_to, local_addr);
-  } else if(device != NULL) {
-    m = mbus_create_serial(device, 115200, local_addr, full_duplex);
-  } else {
-    fprintf(stderr, "No transport specified\n");
-    return -1;
+  if(connect_to == NULL) {
+    fprintf(stderr, "No -c option given\n");
+    exit(1);
+  }
+  mbus_t *m = mbus_create_from_constr(connect_to, local_addr);
+  if(m == NULL) {
+    fprintf(stderr, "Failed to create mbus connection\n");
+    exit(1);
   }
 
   argc -= optind;

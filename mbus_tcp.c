@@ -60,8 +60,8 @@ tcp_rx_thread(void *arg)
 
 
 
-static mbus_t *
-mbus_create_tcp2(const char *host, int port, uint8_t local_addr)
+mbus_t *
+mbus_create_tcp(const char *host, int port, uint8_t local_addr)
 {
   fprintf(stderr, "* Gateway connecting to %s:%d\n",
           host, port);
@@ -95,22 +95,4 @@ mbus_create_tcp2(const char *host, int port, uint8_t local_addr)
   pthread_create(&mt->mt_tid, &attr, tcp_rx_thread, mt);
 
   return &mt->m;
-}
-
-mbus_t *
-mbus_create_tcp(const char *addr, uint8_t local_addr)
-{
-  char *copy = strdup(addr);
-
-  char *port = strchr(copy, ':');
-  if(port == NULL) {
-    fprintf(stderr, "TCP connection not in form addr:port");
-    free(copy);
-    return NULL;
-  }
-
-  *port++ = 0;
-  mbus_t *m = mbus_create_tcp2(copy, atoi(port), local_addr);
-  free(copy);
-  return m;
 }

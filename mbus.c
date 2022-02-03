@@ -12,6 +12,69 @@
 
 #include "mbus_gateway.h"
 
+
+
+
+static int
+str_tokenize(char *buf, char **vec, int vecsize, int delimiter)
+{
+  int n = 0;
+
+  while(1) {
+    while((*buf > 0 && *buf < 33) || *buf == delimiter)
+      buf++;
+    if(*buf == 0)
+      break;
+    vec[n++] = buf;
+    if(n == vecsize)
+      break;
+    while(*buf > 32 && *buf != delimiter)
+      buf++;
+    if(*buf == 0)
+      break;
+    *buf = 0;
+    buf++;
+  }
+  return n;
+}
+
+
+mbus_t *
+mbus_create_from_constr(const char *str0, uint8_t local_addr)
+{
+  const size_t slen = strlen(str0) + 1;
+  char *str = alloca(slen);
+  strcpy(str, str0);
+
+  char *argv[10];
+  int argc = str_tokenize(str, argv, 10, ':');
+
+  if(argc == 3 && !strcmp(argv[0], "tcp")) {
+    return mbus_create_tcp(argv[1], // Hostname
+                           atoi(argv[2]), // Port
+                           local_addr);
+  } else if(argc >= 2 && !strcmp(argv[0], "serial")) {
+    return mbus_create_serial(argv[1], // Device
+                              argc > 2 ? atoi(argv[2]) : 230400, // Baudrate
+                              local_addr,
+                              argc > 3 ? !strcmp(argv[3], "fd") : 0);
+  } else if(argc >= 3 && !strcmp(argv[0], "usb")) {
+    return mbus_create_usb(strtol(argv[1], NULL, 16),    // VID
+                           strtol(argv[2], NULL, 16),    // PID
+                           argc > 3 ? atoi(argv[3]) : 0, // vendor subclass
+                           argc > 4 ? argv[4] : NULL,    // Serial number
+                           local_addr,
+                           NULL, NULL);
+  } else {
+    fprintf(stderr, "Unknown connection-string: %s\n", str0);
+    return NULL;
+  }
+}
+
+
+
+
+
 int64_t
 mbus_get_ts(void)
 {
