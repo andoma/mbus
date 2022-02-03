@@ -96,33 +96,32 @@ set_nonblocking(int fd, int on)
 int
 setupdev(mbus_serial_t *ms, int baudrate)
 {
-  int cflags = CS8 | CLOCAL | CREAD;
-
+  int bflags = 0;
   switch(baudrate) {
   case 2400:
-    cflags |= B2400;
+    bflags |= B2400;
     break;
   case 9600:
-    cflags |= B9600;
+    bflags |= B9600;
     break;
   case 19200:
-    cflags |= B19200;
+    bflags |= B19200;
     break;
   case 38400:
-    cflags |= B38400;
+    bflags |= B38400;
     break;
   case 57600:
-    cflags |= B57600;
+    bflags |= B57600;
     break;
   case 115200:
-    cflags |= B115200;
+    bflags |= B115200;
     break;
   case 230400:
-    cflags |= B230400;
+    bflags |= B230400;
     break;
 #ifdef B921600
   case 921600:
-    cflags |= B921600;
+    bflags |= B921600;
     break;
 #endif
   default:
@@ -130,12 +129,22 @@ setupdev(mbus_serial_t *ms, int baudrate)
     return -1;
   }
 
+  if(tcgetattr(ms->ms_fd, &ms->ms_tio)) {
+    perror("tcgetattr");
+    exit(1);
+  }
 
-  cfmakeraw(&ms->ms_tio);
-  ms->ms_tio.c_cflag = cflags;
-  ms->ms_tio.c_iflag = IGNPAR;
+  cfsetospeed(&ms->ms_tio, bflags);
+  cfsetispeed(&ms->ms_tio, bflags);
+
+  ms->ms_tio.c_cflag &= ~(PARENB | CSTOPB | CSIZE);
+  ms->ms_tio.c_iflag |= CS8;
+  ms->ms_tio.c_iflag |= CRTSCTS;
+  ms->ms_tio.c_iflag |= CLOCAL | CREAD;
   ms->ms_tio.c_cc[VMIN] = 0;
   ms->ms_tio.c_cc[VTIME] = 0;
+
+  cfmakeraw(&ms->ms_tio);
 
   if(tcsetattr(ms->ms_fd, TCSANOW, &ms->ms_tio)) {
     perror("tcsetattr");
