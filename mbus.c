@@ -744,7 +744,6 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
 
   int64_t now = mbus_get_ts();
 
-  pthread_mutex_lock(&m->m_mutex);
   LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
     if(mds->mds_signal != signal)
       continue;
@@ -753,5 +752,4 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
     mds->mds_expire = now + ttl * 100000;
     pthread_cond_signal(&m->m_dsig_driver_cond);
   }
-  pthread_mutex_unlock(&m->m_mutex);
 }
