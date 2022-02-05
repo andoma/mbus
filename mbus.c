@@ -38,6 +38,8 @@ str_tokenize(char *buf, char **vec, int vecsize, int delimiter)
   return n;
 }
 
+static mbus_t *mbus_create_dummy(void);
+
 
 mbus_t *
 mbus_create_from_constr(const char *str0, uint8_t local_addr)
@@ -65,6 +67,8 @@ mbus_create_from_constr(const char *str0, uint8_t local_addr)
                            argc > 4 ? argv[4] : NULL,    // Serial number
                            local_addr,
                            NULL, NULL);
+  } else if(argc == 1 && !strcmp(argv[0], "none")) {
+    return mbus_create_dummy();
   } else {
     fprintf(stderr, "Unknown connection-string: %s\n", str0);
     return NULL;
@@ -829,4 +833,22 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
     mds->mds_expire = now + ttl * 100000;
     pthread_cond_signal(&m->m_dsig_driver_cond);
   }
+}
+
+
+static mbus_error_t
+dummy_send(mbus_t *m, uint8_t addr, const void *data,
+           size_t len, const struct timespec *deadline)
+{
+  return 0;
+}
+
+
+static mbus_t *
+mbus_create_dummy(void)
+{
+  mbus_t *m = calloc(1, sizeof(mbus_t));
+  m->m_send =  dummy_send;
+  mbus_init_common(m);
+  return m;
 }
