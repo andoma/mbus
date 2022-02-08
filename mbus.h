@@ -69,21 +69,28 @@ typedef enum {
 
 typedef struct mbus mbus_t;
 
+typedef void (mbus_log_cb_t)(void *aux, const char *msg);
+
 int64_t mbus_get_ts(void);
 
 void mbus_set_debug_level(mbus_t *m, int level);
 
 mbus_t *mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
                         const char *serial, uint8_t local_addr,
+                        mbus_log_cb_t *log_cb,
                         void (*status_cb)(void *aux, mbus_status_t status),
                         void *aux);
 
 mbus_t *mbus_create_serial(const char *device, int baudrate,
-                           uint8_t local_addr, int full_duplex);
+                           uint8_t local_addr, int full_duplex,
+                           mbus_log_cb_t *log_cb, void *aux);
 
-mbus_t *mbus_create_tcp(const char *host, int port, uint8_t local_addr);
+mbus_t *mbus_create_tcp(const char *host, int port, uint8_t local_addr,
+                        mbus_log_cb_t *log_cb, void *aux);
 
-mbus_t *mbus_create_from_constr(const char *str, uint8_t local_addr);
+
+mbus_t *mbus_create_from_constr(const char *str, uint8_t local_addr,
+                                mbus_log_cb_t *log_cb, void *aux);
 
 mbus_error_t mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
                          const void *req, size_t req_size, void *reply,

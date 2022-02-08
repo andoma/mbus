@@ -34,10 +34,12 @@ typedef struct mbus {
 
   int m_debug_level;
 
+  mbus_log_cb_t *m_log_cb;
+  void *m_aux;
 } mbus_t;
 
 
-void mbus_init_common(mbus_t *m);
+void mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux);
 
 uint32_t mbus_crc32(uint32_t crc, const void *data, size_t n_bytes);
 
@@ -45,3 +47,7 @@ void mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len,
                         int check_crc);
 
 void mbus_cancel_rpc(mbus_t *m);
+
+void mbus_log(mbus_t *m, const char *fmt, ...);
+
+void mbus_hexdump(mbus_t *m, const void* data_, int len);

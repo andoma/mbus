@@ -38,7 +38,8 @@ main(int argc, char **argv)
     fprintf(stderr, "No -c option given\n");
     exit(1);
   }
-  mbus_t *m = mbus_create_from_constr(connect_to, local_addr);
+  mbus_t *m = mbus_create_from_constr(connect_to, local_addr,
+                                      NULL, NULL);
   if(m == NULL) {
     fprintf(stderr, "Failed to create mbus connection\n");
     exit(1);

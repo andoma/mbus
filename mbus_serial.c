@@ -469,7 +469,8 @@ mbus_serial_send_fd(mbus_t *m, uint8_t addr, const void *data,
 
 mbus_t *
 mbus_create_serial(const char *device, int baudrate,
-                   uint8_t local_addr, int full_duplex)
+                   uint8_t local_addr, int full_duplex,
+                   mbus_log_cb_t *log_cb, void *aux)
 {
   int fd = open(device, O_RDWR | O_NOCTTY);
   if(fd == -1) {
@@ -508,7 +509,7 @@ mbus_create_serial(const char *device, int baudrate,
   ms->m.m_send = full_duplex ? mbus_serial_send_fd : mbus_serial_send_hd;
   ms->m.m_destroy = mbus_serial_destroy;
 
-  mbus_init_common(&ms->m);
+  mbus_init_common(&ms->m, log_cb, aux);
 
   pthread_create(&ms->ms_tid, NULL, mbus_thread, ms);
 

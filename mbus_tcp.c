@@ -61,7 +61,8 @@ tcp_rx_thread(void *arg)
 
 
 mbus_t *
-mbus_create_tcp(const char *host, int port, uint8_t local_addr)
+mbus_create_tcp(const char *host, int port, uint8_t local_addr,
+                mbus_log_cb_t *log_cb, void *aux)
 {
   fprintf(stderr, "* Gateway connecting to %s:%d\n",
           host, port);
@@ -85,7 +86,7 @@ mbus_create_tcp(const char *host, int port, uint8_t local_addr)
   mt->m.m_our_addr = local_addr;
   mt->m.m_send = mbus_tcp_send;
 
-  mbus_init_common(&mt->m);
+  mbus_init_common(&mt->m, log_cb, aux);
 
 
   pthread_attr_t attr;

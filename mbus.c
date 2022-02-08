@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <unistd.h>
+#include <stdarg.h>
 
 #include "mbus_gateway.h"
 
@@ -42,7 +43,8 @@ static mbus_t *mbus_create_dummy(void);
 
 
 mbus_t *
-mbus_create_from_constr(const char *str0, uint8_t local_addr)
+mbus_create_from_constr(const char *str0, uint8_t local_addr,
+                        mbus_log_cb_t *log_cb, void *aux)
 {
   const size_t slen = strlen(str0) + 1;
   char *str = alloca(slen);
@@ -54,19 +56,21 @@ mbus_create_from_constr(const char *str0, uint8_t local_addr)
   if(argc == 3 && !strcmp(argv[0], "tcp")) {
     return mbus_create_tcp(argv[1], // Hostname
                            atoi(argv[2]), // Port
-                           local_addr);
+                           local_addr, log_cb, aux);
   } else if(argc >= 2 && !strcmp(argv[0], "serial")) {
     return mbus_create_serial(argv[1], // Device
                               argc > 2 ? atoi(argv[2]) : 230400, // Baudrate
                               local_addr,
-                              argc > 3 ? !strcmp(argv[3], "fd") : 0);
+                              argc > 3 ? !strcmp(argv[3], "fd") : 0,
+                              log_cb, aux);
   } else if(argc >= 3 && !strcmp(argv[0], "usb")) {
     return mbus_create_usb(strtol(argv[1], NULL, 16),    // VID
                            strtol(argv[2], NULL, 16),    // PID
                            argc > 3 ? atoi(argv[3]) : 0, // vendor subclass
                            argc > 4 ? argv[4] : NULL,    // Serial number
                            local_addr,
-                           NULL, NULL);
+                           log_cb,
+                           NULL, aux);
   } else if(argc == 1 && !strcmp(argv[0], "none")) {
     return mbus_create_dummy();
   } else {
@@ -112,8 +116,8 @@ mbus_deadline_from_timeout(int timeout_ms)
   return usec_to_timespec(when);
 }
 
-static void __attribute__((unused))
-hexdump(const char *pfx, const void* data_, int len)
+void
+mbus_hexdump(mbus_t *m, const void* data_, int len)
 {
   int i, j, k;
   const uint8_t* data = data_;
@@ -135,7 +139,7 @@ hexdump(const char *pfx, const void* data_, int len)
       buf[p++] =
         data[i + j] < 32 || data[i + j] > 126 ? '.' : data[i + j];
     buf[p] = 0;
-    printf("%s: %s\n", pfx, buf);
+    mbus_log(m, buf);
   }
 }
 
@@ -264,9 +268,33 @@ pcs_thread(void *arg)
 }
 
 
-void
-mbus_init_common(mbus_t *m)
+static void
+def_log_cb(void *aux, const char *msg)
 {
+  fprintf(stderr, "mbus: %s\n", msg);
+}
+
+
+
+void
+mbus_log(mbus_t *m, const char *fmt, ...)
+{
+  va_list ap;
+  char buf[1024];
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  m->m_log_cb(m->m_aux, buf);
+  va_end(ap);
+}
+
+
+
+void
+mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
+{
+  m->m_log_cb = log_cb ?: def_log_cb;
+  m->m_aux = aux;
+
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
 #ifdef __linux__
@@ -333,7 +361,7 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
   if(check_crc) {
     if(len < 4 || ~mbus_crc32(0, pkt, len)) {
       if(m->m_debug_level >= 1) {
-        printf("RX: CRC ERROR\n");
+        mbus_log(m, "RX: CRC ERROR");
       }
       return;
     }
@@ -348,9 +376,9 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
   uint8_t dst_addr = pkt[0] & 0x0f;
 
   if(m->m_debug_level >= 1) {
-    printf("RX: 0x%x -> 0x%x\n", src_addr, dst_addr);
+    mbus_log(m, "RX: 0x%x -> 0x%x", src_addr, dst_addr);
     if(m->m_debug_level >= 2) {
-      hexdump("RX", pkt, len);
+      mbus_hexdump(m, pkt, len);
     }
   }
 
@@ -849,6 +877,6 @@ mbus_create_dummy(void)
 {
   mbus_t *m = calloc(1, sizeof(mbus_t));
   m->m_send =  dummy_send;
-  mbus_init_common(m);
+  mbus_init_common(m, NULL, NULL);
   return m;
 }
