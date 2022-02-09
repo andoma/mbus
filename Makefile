@@ -5,12 +5,13 @@ SRCS += \
 	mbus_elfloader.c \
 	mbus_gateway.c \
 	mbus_tcp.c \
+	mbus_ota.c \
 	pcs/pcs.c \
 	remote_shell.c \
 	main.c
 
-CFLAGS += ${shell pkg-config --cflags libusb-1.0}
-LDFLAGS += ${shell pkg-config --libs libusb-1.0}
+CFLAGS += ${shell pkg-config --cflags libusb-1.0 libelf}
+LDFLAGS += ${shell pkg-config --libs libusb-1.0 libelf}
 
 LDFLAGS += -lpthread
 

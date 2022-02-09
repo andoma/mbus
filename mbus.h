@@ -36,6 +36,8 @@ extern "C" {
 #define MBUS_OP_RPC_REPLY 12
 // [u8 txid] [var out-data]
 
+#define MBUS_OP_OTA_XFER 13
+
 typedef enum {
     MBUS_ERR_OK = 0,
     MBUS_ERR_NOT_IMPLEMENTED = -1,
@@ -58,8 +60,12 @@ typedef enum {
     MBUS_ERR_CHECKSUM_ERROR = -18,
     MBUS_ERR_MALFORMED = -19,
     MBUS_ERR_INVALID_RPC_ID = -20,
-    ERR_INVALID_RPC_ARGS      = -21,
-    ERR_NO_FLASH_SPACE        = -22,
+    MBUS_ERR_INVALID_RPC_ARGS      = -21,
+    MBUS_ERR_NO_FLASH_SPACE        = -22,
+    MBUS_ERR_INVALID_ARGS          = -23,
+    MBUS_ERR_INVALID_LENGTH        = -24,
+    MBUS_ERR_NOT_IDLE              = -25,
+    MBUS_ERR_BAD_CONFIG            = -26,
 } mbus_error_t;
 
 typedef enum {
@@ -96,6 +102,8 @@ mbus_error_t mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
                          const void *req, size_t req_size, void *reply,
                          size_t *reply_size, int timeout_ms);
 
+uint8_t mbus_get_local_addr(mbus_t *m);
+
 const char *mbus_error_to_string(mbus_error_t err);
 
 typedef struct mbus_dsig_sub mbus_dsig_sub_t;
@@ -123,7 +131,11 @@ pcs_iface_t *mbus_get_pcs_iface(mbus_t *m);
 
 void mbus_destroy(mbus_t *mbus);
 
+mbus_error_t mbus_ota(mbus_t *m, uint8_t target_addr,
+                      const void *image, size_t image_size,
+                      char type);
 
+mbus_error_t mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path);
 
 #ifdef __cplusplus
 }

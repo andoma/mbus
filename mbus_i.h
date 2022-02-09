@@ -36,6 +36,14 @@ typedef struct mbus {
 
   mbus_log_cb_t *m_log_cb;
   void *m_aux;
+
+  const void *m_ota_image;
+  size_t m_ota_image_size;
+  int m_ota_completed;
+  pthread_cond_t m_ota_cond;
+  uint8_t m_ota_remote_addr;
+  mbus_error_t m_ota_xfer_error;
+
 } mbus_t;
 
 
@@ -51,3 +59,11 @@ void mbus_cancel_rpc(mbus_t *m);
 void mbus_log(mbus_t *m, const char *fmt, ...);
 
 void mbus_hexdump(mbus_t *m, const void* data_, int len);
+
+mbus_error_t mbus_invoke_locked(mbus_t *m, uint8_t addr,
+                                const char *name, const void *req,
+                                size_t req_size, void *reply,
+                                size_t* reply_size,
+                                const struct timespec* deadline);
+
+struct timespec mbus_deadline_from_timeout(int timeout_ms);

@@ -58,6 +58,21 @@ main(int argc, char **argv)
   mbus_error_t err;
   if(!strcmp(argv[0], "ping")) {
     err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 1000);
+  } else if(!strcmp(argv[0], "ota")) {
+    err = mbus_ota_elf(m, target_addr, argv[1]);
+  } else if(!strcmp(argv[0], "buildid")) {
+    uint8_t build_id[20];
+    size_t build_id_size = sizeof(build_id);
+    err = mbus_invoke(m, target_addr, "buildid", NULL, 0,
+                      build_id, &build_id_size, 1000);
+    if(!err) {
+      printf("Build-id: ");
+      for(int i = 0; i < build_id_size; i++) {
+        printf("%02x", build_id[i]);
+      }
+      printf("\n");
+    }
+
   } else if(!strcmp(argv[0], "shell")) {
 
     err = mbus_remote_shell(m, target_addr);

@@ -86,6 +86,11 @@ mbus_set_debug_level(mbus_t *m, int level)
   m->m_debug_level = level;
 }
 
+uint8_t
+mbus_get_local_addr(mbus_t *m)
+{
+  return m->m_our_addr;
+}
 
 int64_t
 mbus_get_ts(void)
@@ -109,7 +114,7 @@ usec_to_timespec(uint64_t ts)
 }
 
 
-static struct timespec
+struct timespec
 mbus_deadline_from_timeout(int timeout_ms)
 {
   int64_t when = mbus_get_ts() + timeout_ms * 1000;
@@ -227,6 +232,9 @@ typedef struct mbus_rpc mbus_rpc_t;
 static void *dsig_thread(void *aux);
 
 static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len);
+
+static void mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len,
+                          uint8_t src_addr);
 
 
 pcs_iface_t *
@@ -362,6 +370,9 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
     if(len < 4 || ~mbus_crc32(0, pkt, len)) {
       if(m->m_debug_level >= 1) {
         mbus_log(m, "RX: CRC ERROR");
+        if(m->m_debug_level >= 2) {
+          mbus_hexdump(m, pkt, len);
+        }
       }
       return;
     }
@@ -458,6 +469,10 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 
   case MBUS_OP_DSIG_EMIT:
     dsig_handle(m, pkt, len);
+    break;
+
+  case MBUS_OP_OTA_XFER:
+    mbus_ota_xfer(m, pkt, len, src_addr);
     break;
 
   default:
@@ -583,7 +598,7 @@ mbus_invoke_id(mbus_t *m, uint8_t addr, uint32_t method_id,
 }
 
 
-static mbus_error_t
+mbus_error_t
 mbus_invoke_locked(mbus_t *m, uint8_t addr,
                    const char *name, const void *req,
                    size_t req_size, void *reply,
@@ -670,10 +685,19 @@ mbus_error_to_string(mbus_error_t err)
     return "MALFORMED";
   case MBUS_ERR_INVALID_RPC_ID:
     return "INVALID_RPC_ID";
-  case ERR_INVALID_RPC_ARGS:
+  case MBUS_ERR_INVALID_RPC_ARGS:
     return "INVALID_RPC_ARGS";
-  case ERR_NO_FLASH_SPACE:
+  case MBUS_ERR_NO_FLASH_SPACE:
     return "NO_FLASH_SPACE";
+  case MBUS_ERR_INVALID_ARGS:
+    return "INVALID_ARGS";
+  case MBUS_ERR_INVALID_LENGTH:
+    return "INVALID_LENGTH";
+  case MBUS_ERR_NOT_IDLE:
+    return "NOT_IDLE";
+  case MBUS_ERR_BAD_CONFIG:
+    return "BAD_CONFIG";
+
   }
   return "???";
 }
@@ -861,6 +885,33 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
     mds->mds_expire = now + ttl * 100000;
     pthread_cond_signal(&m->m_dsig_driver_cond);
   }
+}
+
+
+static void
+mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len, uint8_t src_addr)
+{
+  if(m->m_ota_image == NULL)
+    return;
+
+  const uint32_t block = pkt[0] | (pkt[1] << 8) | (pkt[2] << 16);
+  if(block == 0xffffff) {
+    // Done
+    m->m_ota_xfer_error = len > 3 ? -((mbus_error_t)pkt[3]) : 0;
+    m->m_ota_completed = 1;
+    pthread_cond_signal(&m->m_ota_cond);
+    return;
+  }
+
+  uint8_t out[4 + 16];
+  out[0] = MBUS_OP_OTA_XFER;
+  out[1] = block;
+  out[2] = block >> 8;
+  out[3] = block >> 16;
+
+  memcpy(out + 4, m->m_ota_image + block * 16, 16);
+
+  m->m_send(m, src_addr, out, sizeof(out), NULL);
 }
 
 
