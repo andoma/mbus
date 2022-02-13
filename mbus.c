@@ -122,7 +122,7 @@ mbus_deadline_from_timeout(int timeout_ms)
 }
 
 void
-mbus_hexdump(mbus_t *m, const void* data_, int len)
+mbus_hexdump(mbus_t *m, const char *prefix, const void* data_, int len)
 {
   int i, j, k;
   const uint8_t* data = data_;
@@ -144,7 +144,7 @@ mbus_hexdump(mbus_t *m, const void* data_, int len)
       buf[p++] =
         data[i + j] < 32 || data[i + j] > 126 ? '.' : data[i + j];
     buf[p] = 0;
-    mbus_log(m, buf);
+    mbus_log(m, "%s: %s", prefix, buf);
   }
 }
 
@@ -370,8 +370,8 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
     if(len < 4 || ~mbus_crc32(0, pkt, len)) {
       if(m->m_debug_level >= 1) {
         mbus_log(m, "RX: CRC ERROR");
-        if(m->m_debug_level >= 2) {
-          mbus_hexdump(m, pkt, len);
+        if(m->m_debug_level >= 3) {
+          mbus_hexdump(m, "RX.CRCERROR", pkt, len);
         }
       }
       return;
@@ -386,11 +386,29 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
   uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
   uint8_t dst_addr = pkt[0] & 0x0f;
 
-  if(m->m_debug_level >= 1) {
-    mbus_log(m, "RX: 0x%x -> 0x%x", src_addr, dst_addr);
-    if(m->m_debug_level >= 2) {
-      mbus_hexdump(m, pkt, len);
+  if(m->m_debug_level >= 2) {
+
+    if(pkt[1] & 0x80) {
+      mbus_log(m,
+               "RX: 0x%x -> 0x%x PCS: CH:0x%02x %c%c%c%c%c F:0x%02x ACK:0x%04x SEQ:0x%04x %d",
+               src_addr, dst_addr,
+               pkt[1],
+               pkt[2] & 0x1  ? 'S' : ' ',
+               pkt[2] & 0x2  ? 'L' : ' ',
+               pkt[2] & 0x4  ? 'E' : ' ',
+               pkt[2] & 0x8  ? 'I' : ' ',
+               pkt[2] & 0x10 ? 'A' : ' ',
+               pkt[3],
+               pkt[5] | (pkt[4] << 8),
+               pkt[7] | (pkt[6] << 8),
+               len - 8);
+    } else {
+      mbus_log(m, "RX: 0x%x -> 0x%x", src_addr, dst_addr);
     }
+    if(m->m_debug_level >= 3) {
+      mbus_hexdump(m, "RX", pkt, len);
+    }
+
   }
 
   if(dst_addr != m->m_our_addr && dst_addr != 7)

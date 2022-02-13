@@ -58,7 +58,7 @@ void mbus_cancel_rpc(mbus_t *m);
 
 void mbus_log(mbus_t *m, const char *fmt, ...);
 
-void mbus_hexdump(mbus_t *m, const void* data_, int len);
+void mbus_hexdump(mbus_t *m, const char *prefix, const void* data_, int len);
 
 mbus_error_t mbus_invoke_locked(mbus_t *m, uint8_t addr,
                                 const char *name, const void *req,
