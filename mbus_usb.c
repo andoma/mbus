@@ -185,7 +185,7 @@ mbus_thread(void *arg)
         mu->mu_status_cb(mu->mu_aux, MBUS_CONNECTED);
 
       while (1) {
-        uint8_t pkt[128];
+        uint8_t pkt[32];
         int actual_length = 0;
 
         int r = libusb_bulk_transfer(dh, mu->mu_IN_endpoint, pkt, sizeof(pkt),
