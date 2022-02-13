@@ -13,6 +13,8 @@ SRCS += \
 CFLAGS += ${shell pkg-config --cflags libusb-1.0 libelf}
 LDFLAGS += ${shell pkg-config --libs libusb-1.0 libelf}
 
+CFLAGS += -fsanitize=address
+
 LDFLAGS += -lpthread
 
 test: Makefile mbus.h ${SRCS}
