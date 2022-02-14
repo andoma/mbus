@@ -58,6 +58,21 @@ main(int argc, char **argv)
   mbus_error_t err;
   if(!strcmp(argv[0], "ping")) {
     err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 1000);
+  } else if(!strcmp(argv[0], "ping-f")) {
+    time_t t0 = time(NULL);
+    int pps = 0;
+    while(1) {
+      err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 1000);
+      if(err)
+        break;
+      pps++;
+      const time_t now = time(NULL);
+      if(now != t0) {
+        printf("%d pps\n", pps);
+        pps = 0;
+        t0 = now;
+      }
+    }
   } else if(!strcmp(argv[0], "ota")) {
     err = mbus_ota_elf(m, target_addr, argv[1]);
   } else if(!strcmp(argv[0], "buildid")) {
