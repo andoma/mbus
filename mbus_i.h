@@ -36,6 +36,7 @@ typedef struct mbus {
 
   mbus_log_cb_t *m_log_cb;
   void *m_aux;
+  int64_t m_def_log_prev;
 
   const void *m_ota_image;
   size_t m_ota_image_size;
@@ -56,9 +57,9 @@ void mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len,
 
 void mbus_cancel_rpc(mbus_t *m);
 
-void mbus_log(mbus_t *m, const char *fmt, ...);
+void mbus_log(const mbus_t *m, const char *fmt, ...);
 
-void mbus_hexdump(mbus_t *m, const char *prefix, const void* data_, int len);
+void mbus_hexdump(const mbus_t *m, const char *prefix, const void* data_, int len);
 
 mbus_error_t mbus_invoke_locked(mbus_t *m, uint8_t addr,
                                 const char *name, const void *req,
@@ -67,3 +68,6 @@ mbus_error_t mbus_invoke_locked(mbus_t *m, uint8_t addr,
                                 const struct timespec* deadline);
 
 struct timespec mbus_deadline_from_timeout(int timeout_ms);
+
+void mbus_pkt_trace(const mbus_t *m, const char *prefix,
+                    const uint8_t *pkt, size_t len);

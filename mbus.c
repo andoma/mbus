@@ -122,7 +122,7 @@ mbus_deadline_from_timeout(int timeout_ms)
 }
 
 void
-mbus_hexdump(mbus_t *m, const char *prefix, const void* data_, int len)
+mbus_hexdump(const mbus_t *m, const char *prefix, const void* data_, int len)
 {
   int i, j, k;
   const uint8_t* data = data_;
@@ -276,16 +276,31 @@ pcs_thread(void *arg)
 }
 
 
+static int
+get_delta_time(mbus_t *m)
+{
+  int r = 0;
+  int64_t now = mbus_get_ts();
+  if(m->m_def_log_prev == 0)
+    r = 0;
+  else
+    r = now - m->m_def_log_prev;
+  m->m_def_log_prev = now;
+  return r;
+}
+
+
 static void
 def_log_cb(void *aux, const char *msg)
 {
-  fprintf(stderr, "mbus: %s\n", msg);
+  mbus_t *m = aux;
+  fprintf(stderr, "mbus: %7d | %s\n", get_delta_time(m), msg);
 }
 
 
 
 void
-mbus_log(mbus_t *m, const char *fmt, ...)
+mbus_log(const mbus_t *m, const char *fmt, ...)
 {
   va_list ap;
   char buf[1024];
@@ -301,7 +316,7 @@ void
 mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
 {
   m->m_log_cb = log_cb ?: def_log_cb;
-  m->m_aux = aux;
+  m->m_aux = log_cb ? aux : m;
 
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
@@ -364,16 +379,49 @@ mbus_cancel_rpc(mbus_t *m)
 
 
 void
+mbus_pkt_trace(const mbus_t *m, const char *prefix,
+               const uint8_t *pkt, size_t len)
+{
+  if(!m->m_debug_level)
+    return;
+
+  const uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
+  const uint8_t dst_addr = pkt[0] & 0x0f;
+
+  if(m->m_debug_level >= 2) {
+
+    if(pkt[1] & 0x80 && len >= 8) {
+      mbus_log(m,
+               "%s: 0x%x -> 0x%x PCS: CH:0x%02x %c%c%c%c%c%c F:0x%02x ACK:0x%04x SEQ:0x%04x %d",
+               prefix,
+               src_addr, dst_addr,
+               pkt[1],
+               pkt[2] & 0x1  ? 'S' : ' ',
+               pkt[2] & 0x2  ? '2' : ' ',
+               pkt[2] & 0x4  ? 'E' : ' ',
+               pkt[2] & 0x8  ? 'L' : ' ',
+               pkt[2] & 0x10 ? 'P' : ' ',
+               pkt[2] & 0x20 ? 'I' : ' ',
+               pkt[3],
+               pkt[5] | (pkt[4] << 8),
+               pkt[7] | (pkt[6] << 8),
+               len - 8);
+    } else {
+      mbus_log(m, "%s: 0x%x -> 0x%x", prefix, src_addr, dst_addr);
+    }
+    if(m->m_debug_level >= 3) {
+      mbus_hexdump(m, prefix, pkt, len);
+    }
+  }
+}
+
+
+void
 mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 {
   if(check_crc) {
     if(len < 4 || ~mbus_crc32(0, pkt, len)) {
-      if(m->m_debug_level >= 1) {
-        mbus_log(m, "RX: CRC ERROR");
-        if(m->m_debug_level >= 3) {
-          mbus_hexdump(m, "RX.CRCERROR", pkt, len);
-        }
-      }
+      mbus_pkt_trace(m, "RX.CRC", pkt, len);
       return;
     }
     len -= 4;
@@ -383,33 +431,10 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
     return;
   }
 
-  uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
-  uint8_t dst_addr = pkt[0] & 0x0f;
+  mbus_pkt_trace(m, "RX", pkt, len);
 
-  if(m->m_debug_level >= 2) {
-
-    if(pkt[1] & 0x80) {
-      mbus_log(m,
-               "RX: 0x%x -> 0x%x PCS: CH:0x%02x %c%c%c%c%c F:0x%02x ACK:0x%04x SEQ:0x%04x %d",
-               src_addr, dst_addr,
-               pkt[1],
-               pkt[2] & 0x1  ? 'S' : ' ',
-               pkt[2] & 0x2  ? 'L' : ' ',
-               pkt[2] & 0x4  ? 'E' : ' ',
-               pkt[2] & 0x8  ? 'I' : ' ',
-               pkt[2] & 0x10 ? 'A' : ' ',
-               pkt[3],
-               pkt[5] | (pkt[4] << 8),
-               pkt[7] | (pkt[6] << 8),
-               len - 8);
-    } else {
-      mbus_log(m, "RX: 0x%x -> 0x%x", src_addr, dst_addr);
-    }
-    if(m->m_debug_level >= 3) {
-      mbus_hexdump(m, "RX", pkt, len);
-    }
-
-  }
+  const uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
+  const uint8_t dst_addr = pkt[0] & 0x0f;
 
   if(dst_addr != m->m_our_addr && dst_addr != 7)
     return;
