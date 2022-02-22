@@ -74,7 +74,8 @@ main(int argc, char **argv)
       }
     }
   } else if(!strcmp(argv[0], "ota")) {
-    err = mbus_ota_elf(m, target_addr, argv[1]);
+    err = mbus_ota_elf(m, target_addr, argv[1],
+                       argc > 2 && !strcmp(argv[2], "force"));
   } else if(!strcmp(argv[0], "buildid")) {
     uint8_t build_id[20];
     size_t build_id_size = sizeof(build_id);

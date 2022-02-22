@@ -7,7 +7,7 @@
 #include <stdlib.h>
 
 #include <fcntl.h>
-
+#include <sys/param.h>
 
 typedef struct {
   uint32_t src_offset;
@@ -22,8 +22,9 @@ typedef struct {
 } flash_multi_write_chunks_t;
 
 
+// Transmit sections
 static mbus_error_t
-mbus_ota_elf_perform(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
+mbus_ota_elf_perform_s(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
 {
   size_t count = 0;
   int r = elf_getphdrnum(elf, &count);
@@ -79,10 +80,77 @@ mbus_ota_elf_perform(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
 }
 
 
+// Transmit single raw image
+static mbus_error_t
+mbus_ota_elf_perform_r(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
+{
+  size_t count = 0;
+  int r = elf_getphdrnum(elf, &count);
+  if(r) {
+    return MBUS_ERR_MISMATCH;
+  }
+
+  Elf32_Phdr *phdr = elf32_getphdr(elf);
+
+  uint32_t start_addr = 0xffffffff;
+  uint32_t end_addr = 0;
+  for(size_t i = 0; i < count; i++) {
+    start_addr = MIN(start_addr, phdr[i].p_paddr);
+    end_addr = MAX(end_addr, phdr[i].p_paddr + phdr[i].p_filesz);
+  }
+
+  if(end_addr < start_addr) {
+    return MBUS_ERR_OPERATION_FAILED;
+  }
+
+  end_addr = (end_addr + 15) & ~15;
+  uint32_t image_size = end_addr - start_addr;
+
+  void *image = malloc(image_size);
+  memset(image, 0xff, image_size);
+  mbus_log(m, "OTA: Image size: 0x%08x", image_size);
+
+  int fail = 0;
+  for(size_t i = 0; i < count; i++) {
+    uint32_t offset = phdr[i].p_paddr - start_addr;
+    uint32_t len = phdr[i].p_filesz;
+
+    mbus_log(m, "OTA: Section %zd at 0x%08x size:0x%x",
+           i, phdr[i].p_paddr, len);
+
+    if(pread(fd, image + offset,
+             len, phdr[i].p_offset) != len)
+      fail = 1;
+  }
+
+  if(fail)
+    return MBUS_ERR_OPERATION_FAILED;
+
+  mbus_error_t err = mbus_ota(m, target_addr, image, image_size, 'r');
+  free(image);
+  return err;
+}
+
+
+static mbus_error_t
+mbus_ota_elf_perform(mbus_t *m, uint8_t target_addr, Elf *elf, int fd,
+                     char otamode)
+{
+  if(otamode == 's') {
+    return mbus_ota_elf_perform_s(m, target_addr, elf, fd);
+  } else if(otamode == 'r') {
+    return mbus_ota_elf_perform_r(m, target_addr, elf, fd);
+  } else {
+    return MBUS_ERR_MISMATCH;
+  }
+}
+
+
 
 
 mbus_error_t
-mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path)
+mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path,
+             int force_upgrade)
 {
   mbus_error_t err;
 
@@ -182,9 +250,9 @@ mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path)
 
 
   err = 0;
-  if(memcmp(loaded_build_id, running_build_id, 20)) {
+  if(memcmp(loaded_build_id, running_build_id, 20) || force_upgrade) {
     // Build-id differs, do upgrade
-    err = mbus_ota_elf_perform(m, target_addr, elf, fd);
+    err = mbus_ota_elf_perform(m, target_addr, elf, fd, otamode);
   } else {
     mbus_log(m, "OTA: Image already running");
   }

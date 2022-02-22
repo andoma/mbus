@@ -135,7 +135,8 @@ mbus_error_t mbus_ota(mbus_t *m, uint8_t target_addr,
                       const void *image, size_t image_size,
                       char type);
 
-mbus_error_t mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path);
+mbus_error_t mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path,
+                          int force_upgrade);
 
 #ifdef __cplusplus
 }
