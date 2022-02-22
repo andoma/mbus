@@ -105,6 +105,7 @@ main(int argc, char **argv)
 
   if(err)
     fprintf(stderr, "%s\n", mbus_error_to_string(err));
-
+  else
+    fprintf(stderr, "OK\n");
   return !!err;
 }
