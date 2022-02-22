@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <termios.h>
 
-//#include <linux/serial.h>
+#include <linux/serial.h>
 
 static void __attribute__((unused))
 hexdump(const char *pfx, const void* data_, int len)
@@ -55,10 +55,9 @@ typedef struct {
 
   struct termios ms_tio;
 
-  int ms_pipe[2];
-
-  int ms_state;
   struct mbus_packet_queue ms_mpq;
+  size_t ms_mpq_size;
+
   pthread_mutex_t ms_mpq_mutex;
 
   uint8_t ms_sync;
@@ -78,19 +77,6 @@ typedef struct mbus_packet {
 #define MBUS_STATE_IDLE     0
 #define MBUS_STATE_TX       1
 #define MBUS_STATE_RX       2
-
-
-static void
-set_nonblocking(int fd, int on)
-{
-  int flags = fcntl(fd, F_GETFL);
-  if(on) {
-    flags |= O_NONBLOCK;
-  } else {
-    flags &= ~O_NONBLOCK;
-  }
-  fcntl(fd, F_SETFL, flags);
-}
 
 
 int
@@ -148,31 +134,26 @@ setupdev(mbus_serial_t *ms, int baudrate)
 
   if(tcsetattr(ms->ms_fd, TCSANOW, &ms->ms_tio)) {
     perror("tcsetattr");
-    return -1;
+    exit(1);
   }
 
-#if 0
+#if 1
   struct serial_struct serial;
   if(ioctl(ms->ms_fd, TIOCGSERIAL, &serial)) {
     perror("TIOCGSERIAL");
-    return -1;
+    exit(1);
   }
   serial.flags |= ASYNC_LOW_LATENCY;
   if(ioctl(ms->ms_fd, TIOCSSERIAL, &serial)) {
     perror("TIOCSSERIAL");
-    return -1;
+    exit(1);
   }
 #endif
 
-  set_nonblocking(ms->ms_fd, 1);
+  //  set_nonblocking(ms->ms_fd, 1);
   return 0;
 }
 
-static void
-wakeup(mbus_serial_t *ms, char code)
-{
-  if(write(ms->ms_pipe[1], &code, 1)) {}
-}
 
 static int __attribute__((unused))
 get_delta_time(void)
@@ -189,12 +170,12 @@ get_delta_time(void)
 }
 
 
-
+#if 0
 static void
 mbus_set_state(mbus_serial_t *ms, int state, const char *reason)
 {
   ms->ms_state = state;
-#if 0
+#if 1
   printf("%-10d: %-5s %s\n",
          get_delta_time(),
          state == MBUS_STATE_IDLE ? "IDLE" :
@@ -203,7 +184,7 @@ mbus_set_state(mbus_serial_t *ms, int state, const char *reason)
          reason);
 #endif
 }
-
+#endif
 
 static mbus_packet_t *
 encode_packet(const uint8_t *data, size_t len, const mbus_t *m, uint8_t addr)
@@ -213,6 +194,8 @@ encode_packet(const uint8_t *data, size_t len, const mbus_t *m, uint8_t addr)
   memcpy(buf + 1, data, len);
   uint32_t crc = ~mbus_crc32(0, buf, 1 + len);
   memcpy(buf + 1 + len, &crc, 4);
+
+  mbus_pkt_trace(m, "TX", buf, 1 + len);
 
   data = buf;
   len += 1 + 4;
@@ -243,6 +226,31 @@ encode_packet(const uint8_t *data, size_t len, const mbus_t *m, uint8_t addr)
 }
 
 
+static void
+set_txe(mbus_serial_t *ms, int on)
+{
+  ioctl(ms->ms_fd, on ? TIOCMBIS : TIOCMBIC, (int []){TIOCM_RTS});
+}
+
+
+static void
+mbus_serial_xmit(mbus_serial_t *ms)
+{
+  mbus_packet_t *mp = TAILQ_FIRST(&ms->ms_mpq);
+
+  //  printf("%d: TX_START %zd\n", get_delta_time(), mp->mp_size);
+
+  set_txe(ms, 1);
+  if(write(ms->ms_fd, mp->mp_data, mp->mp_size) != mp->mp_size) {
+  }
+  //  printf("%d: TX_2\n", get_delta_time());
+  tcdrain(ms->ms_fd);
+  //  printf("%d: TX_3\n", get_delta_time());
+  set_txe(ms, 0);
+  //  printf("%d: TX_DONE\n", get_delta_time());
+}
+
+
 static mbus_error_t
 mbus_serial_send_hd(mbus_t *m, uint8_t addr, const void *data,
                     size_t len, const struct timespec *deadline)
@@ -251,9 +259,25 @@ mbus_serial_send_hd(mbus_t *m, uint8_t addr, const void *data,
 
   mbus_serial_t *ms = (mbus_serial_t *)m;
   pthread_mutex_lock(&ms->ms_mpq_mutex);
-  TAILQ_INSERT_TAIL(&ms->ms_mpq, mp, mp_link);
+
+  mbus_packet_t *s;
+  TAILQ_FOREACH(s, &ms->ms_mpq, mp_link) {
+    if(s->mp_size == mp->mp_size &&
+       !memcmp(s->mp_data, mp->mp_data, mp->mp_size))
+      break;
+  }
+
+  if(s == NULL && ms->ms_mpq_size < 10) {
+    TAILQ_INSERT_TAIL(&ms->ms_mpq, mp, mp_link);
+    ms->ms_mpq_size++;
+
+    if(ms->ms_mpq_size == 1)
+      mbus_serial_xmit(ms);
+
+  } else {
+    free(mp);
+  }
   pthread_mutex_unlock(&ms->ms_mpq_mutex);
-  wakeup(ms, 't');
   return 0;
 }
 
@@ -265,7 +289,7 @@ mbus_serial_destroy(mbus_t *m)
 }
 
 
-
+#if 0
 int
 mbus_bus_idle(mbus_serial_t *ms)
 {
@@ -294,16 +318,11 @@ mbus_bus_idle(mbus_serial_t *ms)
   }
   return 0;
 }
-
-
-static void
-set_txe(mbus_serial_t *ms, int on)
-{
-  ioctl(ms->ms_fd, on ? TIOCMBIS : TIOCMBIC, (int []){TIOCM_RTS});
-}
+#endif
 
 
 
+#if 0
 int
 mbus_bus_tx(mbus_serial_t *ms)
 {
@@ -347,6 +366,10 @@ mbus_bus_tx(mbus_serial_t *ms)
 
     if(memcmp(bounce + echo_rx_size,
               mp->mp_data + echo_rx_size, r)) {
+      printf("BOUNCE %zd %d\n", echo_rx_size, r);
+      mbus_hexdump(&ms->m, bounce + echo_rx_size, r);
+      printf("PKT\n");
+      mbus_hexdump(&ms->m, mp->mp_data + echo_rx_size, r);
       set_txe(ms, 0);
       mbus_set_state(ms, MBUS_STATE_RX, "tx: Noise/Collision");
       return 0;
@@ -357,11 +380,13 @@ mbus_bus_tx(mbus_serial_t *ms)
   set_txe(ms, 0);
   pthread_mutex_lock(&ms->ms_mpq_mutex);
   TAILQ_REMOVE(&ms->ms_mpq, mp, mp_link);
+  ms->ms_mpq_size--;
   pthread_mutex_unlock(&ms->ms_mpq_mutex);
   free(mp);
   mbus_set_state(ms, MBUS_STATE_RX, "tx: Done");
   return 0;
 }
+#endif
 
 
 static void
@@ -385,6 +410,8 @@ hdlc_decode(mbus_serial_t *ms)
 int
 mbus_bus_rx(mbus_serial_t *ms)
 {
+  uint8_t c;
+
   struct pollfd pfd[1];
 
   pfd[0].fd = ms->ms_fd;
@@ -396,19 +423,41 @@ mbus_bus_rx(mbus_serial_t *ms)
   }
 
   if(r == 0) {
-    return mbus_bus_tx(ms);
+    if(ms->ms_rxlen == 0 && ms->ms_mpq_size) {
+      mbus_serial_xmit(ms);
+    }
+    return 0;
   }
-  uint8_t c;
+
   r = read(ms->ms_fd, &c, 1);
   if(r == -1) {
     perror("read");
     return -1;
   }
+
+  //  printf("%d: %02x\n", get_delta_time(), c);
   if(c == 0x7e) {
     if(ms->ms_rxlen) {
-      hdlc_decode(ms);
+
       pthread_mutex_lock(&ms->m.m_mutex);
-      mbus_rx_handle_pkt(&ms->m, ms->ms_rxbuf, ms->ms_rxlen, 1);
+
+      mbus_packet_t *mp = TAILQ_FIRST(&ms->ms_mpq);
+      if(mp != NULL &&
+         mp->mp_size == ms->ms_rxlen + 2 &&
+         !memcmp(mp->mp_data + 1, ms->ms_rxbuf, ms->ms_rxlen)) {
+        // Received our own packet without errors, drop it
+        TAILQ_REMOVE(&ms->ms_mpq, mp, mp_link);
+        ms->ms_mpq_size--;
+        free(mp);
+
+      } else {
+        hdlc_decode(ms);
+        if((ms->ms_rxbuf[0] >> 4) != ms->m.m_our_addr) {
+          //          printf("%d: HANDLE_RX\n", get_delta_time());
+          mbus_rx_handle_pkt(&ms->m, ms->ms_rxbuf, ms->ms_rxlen, 1);
+        }
+      }
+
       pthread_mutex_unlock(&ms->m.m_mutex);
     }
 
@@ -430,24 +479,8 @@ static void *
 mbus_thread(void *arg)
 {
   mbus_serial_t *ms = arg;
-  set_txe(ms, 0);
-
   while(1) {
-
-    int r = 0;
-    switch(ms->ms_state) {
-    case MBUS_STATE_IDLE:
-      r = mbus_bus_idle(ms);
-      break;
-    case MBUS_STATE_TX:
-      r = mbus_bus_tx(ms);
-      break;
-    case MBUS_STATE_RX:
-      r = mbus_bus_rx(ms);
-      break;
-    }
-    if(r)
-      break;
+    mbus_bus_rx(ms);
   }
   return NULL;
 }
@@ -487,21 +520,6 @@ mbus_create_serial(const char *device, int baudrate,
     return NULL;
   }
 
-#ifdef __linux__
-  if(pipe2(ms->ms_pipe, O_CLOEXEC)) {
-    perror("pipe");
-    close(fd);
-    free(ms);
-    return NULL;
-  }
-#else
-  if(pipe(ms->ms_pipe)) {
-    perror("pipe");
-    close(fd);
-    free(ms);
-    return NULL;
-  }
-#endif
 
   TAILQ_INIT(&ms->ms_mpq);
 
