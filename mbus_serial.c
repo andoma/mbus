@@ -15,7 +15,9 @@
 #include <stdio.h>
 #include <termios.h>
 
+#ifdef __linux__
 #include <linux/serial.h>
+#endif
 
 static void __attribute__((unused))
 hexdump(const char *pfx, const void* data_, int len)
@@ -137,7 +139,7 @@ setupdev(mbus_serial_t *ms, int baudrate)
     exit(1);
   }
 
-#if 1
+#ifdef __linux__
   struct serial_struct serial;
   if(ioctl(ms->ms_fd, TIOCGSERIAL, &serial)) {
     perror("TIOCGSERIAL");
