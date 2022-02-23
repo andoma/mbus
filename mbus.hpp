@@ -1,3 +1,5 @@
+#pragma once
+
 #include "mbus.h"
 #include <functional>
 
