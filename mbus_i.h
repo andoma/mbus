@@ -74,3 +74,5 @@ struct timespec mbus_deadline_from_timeout(int timeout_ms);
 
 void mbus_pkt_trace(const mbus_t *m, const char *prefix,
                     const uint8_t *pkt, size_t len);
+
+int mbus_gateway_intercept(struct mbus *m, const uint8_t *pkt, size_t len);

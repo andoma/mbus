@@ -35,6 +35,8 @@ typedef struct mbus_gateway {
   struct xlate_state_list g_rpc_states;
   struct xlate_state_list g_pcs_states;
 
+  int g_port;
+
 } gateway_t;
 
 
@@ -213,15 +215,15 @@ janitor(void *arg)
   return NULL;
 }
 
-
 mbus_error_t
-mbus_gateway(mbus_t *m, int local_port)
+mbus_gateway0(gateway_t *g)
 {
   struct sockaddr_in localaddr = {
     .sin_family = AF_INET,
-    .sin_port = htons(local_port),
+    .sin_port = htons(g->g_port),
   };
 
+  mbus_t *m = g->g_mbus;
   int lfd = socket(AF_INET, SOCK_STREAM, 0);
 
   setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, (const int[]){1}, sizeof(int));
@@ -233,9 +235,6 @@ mbus_gateway(mbus_t *m, int local_port)
 
   listen(lfd, 100);
 
-  gateway_t *g = calloc(1, sizeof(gateway_t));
-  g->g_mbus = m;
-  m->m_gateway = g;
 
   pthread_t tid;
   pthread_attr_t attr;
@@ -265,6 +264,31 @@ mbus_gateway(mbus_t *m, int local_port)
 
     pthread_create(&tid, &attr, peer_thread, p);
   }
+  return 0;
+}
+
+
+static void *
+gateway_thread(void *arg)
+{
+  mbus_gateway0(arg);
+  return NULL;
+}
+
+
+mbus_error_t
+mbus_gateway(mbus_t *m, int local_port, int background)
+{
+  gateway_t *g = calloc(1, sizeof(gateway_t));
+  g->g_mbus = m;
+  m->m_gateway = g;
+  g->g_port = local_port;
+
+  if(!background)
+    return mbus_gateway0(g);
+
+  pthread_t tid;
+  pthread_create(&tid, NULL, gateway_thread, g);
   return 0;
 }
 

@@ -1,7 +1,16 @@
 #pragma once
 
-#include "mbus_i.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if 0
+}
+#endif
 
-mbus_error_t mbus_gateway(mbus_t *m, int port);
+struct mbus;
 
-int mbus_gateway_intercept(mbus_t *m, const uint8_t *pkt, size_t len);
+mbus_error_t mbus_gateway(struct mbus *m, int port, int background);
+
+#ifdef __cplusplus
+}
+#endif
