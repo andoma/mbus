@@ -12,7 +12,6 @@ typedef struct {
   mbus_t m;
   pthread_t mu_tid;
   libusb_device_handle *mu_handle;
-  libusb_context *mu_ctx;
   uint16_t mu_vid;
   uint16_t mu_pid;
 
@@ -70,7 +69,7 @@ mbus_usb_send(mbus_t *m, uint8_t addr, const void *data,
 
 
 static libusb_device_handle *
-mbus_usb_open(mbus_usb_t *mu)
+mbus_usb_open(mbus_usb_t *mu, libusb_context *ctx)
 {
   struct libusb_device** devs;
   struct libusb_device* dev;
@@ -78,7 +77,7 @@ mbus_usb_open(mbus_usb_t *mu)
   size_t i = 0;
   int r;
 
-  if(libusb_get_device_list(mu->mu_ctx, &devs) < 0)
+  if(libusb_get_device_list(ctx, &devs) < 0)
     return NULL;
 
   while ((dev = devs[i++]) != NULL) {
@@ -135,8 +134,10 @@ mbus_usb_open(mbus_usb_t *mu)
                desc.idVendor, desc.idProduct, libusb_error_name(r));
       continue;
     }
-    if(!mu->mu_serial)
+    if(!mu->mu_serial) {
+      libusb_free_device_list(devs, 1);
       return dev_handle;
+    }
 
     char sn[64];
     int len = libusb_get_string_descriptor_ascii(dev_handle,
@@ -147,8 +148,10 @@ mbus_usb_open(mbus_usb_t *mu)
       continue;
 
     sn[len] = 0;
-    if(!strcmp(sn, mu->mu_serial))
+    if(!strcmp(sn, mu->mu_serial)) {
+      libusb_free_device_list(devs, 1);
       return dev_handle;
+    }
 
     libusb_close(dev_handle);
   }
@@ -165,12 +168,13 @@ mbus_thread(void *arg)
   mbus_usb_t *mu = arg;
 
   while (1) {
-    if(libusb_init(&mu->mu_ctx)) {
+    libusb_context *ctx;
+    if(libusb_init(&ctx)) {
       sleep(1);
       continue;
     }
 
-    struct libusb_device_handle* dh = mbus_usb_open(mu);
+    struct libusb_device_handle* dh = mbus_usb_open(mu, ctx);
     if(dh != NULL) {
       mbus_log(&mu->m, "Opened USB-Interface:%d IN:0x%02x OUT:0x%02x",
                mu->mu_interface, mu->mu_IN_endpoint, mu->mu_OUT_endpoint);
@@ -213,7 +217,7 @@ mbus_thread(void *arg)
       libusb_close(dh);
     }
     usleep(100000);
-    libusb_exit(mu->mu_ctx);
+    libusb_exit(ctx);
   }
   return NULL;
 }
