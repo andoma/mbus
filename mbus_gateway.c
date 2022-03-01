@@ -331,7 +331,8 @@ mbus_gateway_intercept(mbus_t *m, const uint8_t *pkt, size_t len)
   }
 
   const uint8_t opcode = pkt[1] & 0x0f;
-  if(opcode == MBUS_OP_DSIG_EMIT) {
+  if(opcode == MBUS_OP_DSIG_EMIT ||
+     opcode == MBUS_OP_OTA_XFER) {
     peer_t *p;
     LIST_FOREACH(p, &g->g_peers, p_link) {
       send_to_peer(p, pkt, len);
