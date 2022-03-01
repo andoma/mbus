@@ -131,6 +131,8 @@ pcs_iface_t *mbus_get_pcs_iface(mbus_t *m);
 
 void mbus_destroy(mbus_t *mbus);
 
+uint16_t mbus_get_active_hosts(mbus_t *m);
+
 mbus_error_t mbus_ota(mbus_t *m, uint8_t target_addr,
                       const void *image, size_t image_size,
                       char type);

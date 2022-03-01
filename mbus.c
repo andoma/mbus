@@ -229,7 +229,7 @@ typedef struct mbus_method {
 typedef struct mbus_rpc mbus_rpc_t;
 
 
-static void *dsig_thread(void *aux);
+static void *timer_thread(void *aux);
 
 static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len);
 
@@ -326,7 +326,7 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
   pthread_cond_init(&m->m_dsig_driver_cond, &attr);
   pthread_condattr_destroy(&attr);
 
-  pthread_create(&m->m_dsig_thread, NULL, dsig_thread, m);
+  pthread_create(&m->m_timer_thread, NULL, timer_thread, m);
 
   m->m_pcs = pcs_iface_create(m, 64, NULL);
 
@@ -435,6 +435,8 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 
   const uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
   const uint8_t dst_addr = pkt[0] & 0x0f;
+
+  m->host_active[src_addr] = 2;
 
   if(dst_addr != m->m_our_addr && dst_addr != 7)
     return;
@@ -792,7 +794,7 @@ struct mbus_dsig_sub {
 
 
 static void *
-dsig_thread(void *aux)
+timer_thread(void *aux)
 {
   mbus_t *m = aux;
   mbus_dsig_driver_t *mdd;
@@ -801,7 +803,15 @@ dsig_thread(void *aux)
 
   while(1) {
     int64_t now = mbus_get_ts();
-    int64_t next_wakeup = INT64_MAX;
+    int64_t next_wakeup = now + 1000000;
+
+    if(now >= m->next_host_active_clear) {
+      m->next_host_active_clear = now + 1000000;
+      for(int i = 0; i < sizeof(m->host_active); i++) {
+        if(m->host_active[i])
+          m->host_active[i]--;
+      }
+    }
 
     LIST_FOREACH(mdd, &m->m_dsig_drivers, mdd_link) {
       if(mdd->mdd_next_emit == 0)
@@ -973,4 +983,16 @@ mbus_create_dummy(void)
   m->m_send =  dummy_send;
   mbus_init_common(m, NULL, NULL);
   return m;
+}
+
+
+uint16_t
+mbus_get_active_hosts(mbus_t *m)
+{
+  uint16_t r = 0;
+  for(int i = 0; i < sizeof(m->host_active); i++) {
+    if(m->host_active[i])
+      r |= (1 << i);
+  }
+  return r;
 }

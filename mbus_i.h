@@ -21,7 +21,7 @@ typedef struct mbus {
 
   void (*m_destroy)(struct mbus *m);
 
-  pthread_t m_dsig_thread;
+  pthread_t m_timer_thread;
   pthread_cond_t m_dsig_driver_cond;
 
   LIST_HEAD(, mbus_dsig_driver) m_dsig_drivers;
@@ -44,6 +44,9 @@ typedef struct mbus {
   pthread_cond_t m_ota_cond;
   uint8_t m_ota_remote_addr;
   mbus_error_t m_ota_xfer_error;
+
+  uint8_t host_active[16];
+  int64_t next_host_active_clear;
 
 } mbus_t;
 
