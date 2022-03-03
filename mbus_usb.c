@@ -55,7 +55,8 @@ mbus_usb_send(mbus_t *m, uint8_t addr, const void *data,
   struct libusb_device_handle *dh;
 
   while ((dh = mu->mu_handle) == NULL) {
-    if(pthread_cond_timedwait(&mu->mu_handle_cond, &m->m_mutex, deadline) ==
+    if(deadline == NULL ||
+       pthread_cond_timedwait(&mu->mu_handle_cond, &m->m_mutex, deadline) ==
        ETIMEDOUT) {
       return MBUS_ERR_NO_DEVICE;
     }
