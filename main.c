@@ -98,7 +98,7 @@ main(int argc, char **argv)
       fprintf(stderr, "Missing argument: port\n");
       return 1;
     }
-    err = mbus_gateway(m, atoi(argv[1]));
+    err = mbus_gateway(m, atoi(argv[1]), 0);
   } else {
     fprintf(stderr, "Unknown command %s\n", argv[0]);
     return 1;
