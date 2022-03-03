@@ -318,6 +318,8 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
   m->m_log_cb = log_cb ?: def_log_cb;
   m->m_aux = log_cb ? aux : m;
 
+  pthread_mutex_init(&m->m_mutex, NULL);
+
   pthread_condattr_t attr;
   pthread_condattr_init(&attr);
 #ifdef __linux__
