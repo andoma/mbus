@@ -137,6 +137,8 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
     m->m_send(m, xs->xs_addr, rewrite + 1, len - 1, NULL);
   } else if(opcode == MBUS_OP_DSIG_EMIT) {
     m->m_send(m, bus_addr, pkt + 1, len - 1, NULL);
+  } else if(opcode == MBUS_OP_OTA_XFER) {
+    m->m_send(m, bus_addr, pkt + 1, len - 1, NULL);
   }
 
 }
