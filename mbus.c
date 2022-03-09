@@ -874,12 +874,17 @@ mbus_dsig_set(mbus_t *m,
               const void *data, size_t len)
 {
   pthread_mutex_lock(&m->m_mutex);
-  free(mdd->mdd_data);
-  mdd->mdd_data = malloc(len);
-  mdd->mdd_length = len;
-  mdd->mdd_next_emit = 1;
-  memcpy(mdd->mdd_data, data, len);
-  pthread_cond_signal(&m->m_dsig_driver_cond);
+
+  if(mdd->mdd_data == NULL ||
+     len != mdd->mdd_length ||
+     memcmp(mdd->mdd_data, data, len)) {
+    free(mdd->mdd_data);
+    mdd->mdd_data = malloc(len);
+    mdd->mdd_length = len;
+    mdd->mdd_next_emit = 1;
+    memcpy(mdd->mdd_data, data, len);
+    pthread_cond_signal(&m->m_dsig_driver_cond);
+  }
   pthread_mutex_unlock(&m->m_mutex);
 }
 
