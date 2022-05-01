@@ -821,6 +821,14 @@ timer_thread(void *aux)
       if(mdd->mdd_next_emit <= now) {
         mbus_dsig_emit_locked(m, mdd->mdd_signal,
                               mdd->mdd_data, mdd->mdd_length, mdd->mdd_ttl);
+
+        LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
+          if(mds->mds_signal == mdd->mdd_signal) {
+            mds->mds_cb(mds->mds_opaque, mdd->mdd_data, mdd->mdd_length);
+            mds->mds_expire = now + mdd->mdd_ttl * 100000;
+          }
+        }
+
         if(mdd->mdd_length) {
           mdd->mdd_next_emit = now + (1 + mdd->mdd_ttl) * 30000;
         } else {
