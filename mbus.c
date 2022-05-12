@@ -231,7 +231,8 @@ typedef struct mbus_rpc mbus_rpc_t;
 
 static void *timer_thread(void *aux);
 
-static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len);
+static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len,
+                        uint8_t src_addr);
 
 static void mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len,
                           uint8_t src_addr);
@@ -515,7 +516,7 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
     break;
 
   case MBUS_OP_DSIG_EMIT:
-    dsig_handle(m, pkt, len);
+    dsig_handle(m, pkt, len, src_addr);
     break;
 
   case MBUS_OP_OTA_XFER:
@@ -789,6 +790,7 @@ struct mbus_dsig_driver {
 struct mbus_dsig_sub {
   LIST_ENTRY(mbus_dsig_sub) mds_link;
   uint8_t mds_signal;
+  uint8_t mds_src;
   void (*mds_cb)(void *opaque, const uint8_t *data, size_t len);
   void *mds_opaque;
   int64_t mds_expire;
@@ -822,8 +824,11 @@ timer_thread(void *aux)
         mbus_dsig_emit_locked(m, mdd->mdd_signal,
                               mdd->mdd_data, mdd->mdd_length, mdd->mdd_ttl);
 
+        // Local echo
         LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
-          if(mds->mds_signal == mdd->mdd_signal) {
+          if(mds->mds_signal == mdd->mdd_signal &&
+             m->m_our_addr >= mds->mds_src) {
+            mds->mds_src = m->m_our_addr;
             mds->mds_cb(mds->mds_opaque, mdd->mdd_data, mdd->mdd_length);
             mds->mds_expire = now + mdd->mdd_ttl * 100000;
           }
@@ -841,6 +846,7 @@ timer_thread(void *aux)
 
     LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
       if(mds->mds_expire <= now) {
+        mds->mds_src = 0;
         mds->mds_cb(mds->mds_opaque, NULL, 0);
         mds->mds_expire = INT64_MAX;
       } else if(mds->mds_expire != INT64_MAX) {
@@ -931,7 +937,7 @@ mbus_dsig_sub(mbus_t *m,
 
 
 static void
-dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
+dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len, uint8_t remote_addr)
 {
   mbus_dsig_sub_t *mds;
   if(len < 2)
@@ -949,9 +955,12 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len)
     if(mds->mds_signal != signal)
       continue;
 
-    mds->mds_cb(mds->mds_opaque, pkt, len);
-    mds->mds_expire = now + ttl * 100000;
-    pthread_cond_signal(&m->m_dsig_driver_cond);
+    if(remote_addr >= mds->mds_src) {
+      mds->mds_src = remote_addr;
+      mds->mds_cb(mds->mds_opaque, pkt, len);
+      mds->mds_expire = now + ttl * 100000;
+      pthread_cond_signal(&m->m_dsig_driver_cond);
+    }
   }
 }
 
