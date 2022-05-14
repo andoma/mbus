@@ -327,6 +327,7 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
   pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
 #endif
   pthread_cond_init(&m->m_dsig_driver_cond, &attr);
+  pthread_cond_init(&m->m_ota_cond, &attr);
   pthread_condattr_destroy(&attr);
 
   pthread_create(&m->m_timer_thread, NULL, timer_thread, m);
