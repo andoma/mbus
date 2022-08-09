@@ -35,13 +35,18 @@ mbus_ota_elf_perform_s(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
   Elf32_Phdr *phdr = elf32_getphdr(elf);
 
   size_t total_load_size = 0;
+
+  int output_chunks = 0;
   for(size_t i = 0; i < count; i++) {
+    if(phdr[i].p_type != 1)
+      continue;
     total_load_size += phdr[i].p_filesz;
+    output_chunks++;
   }
 
   const uint32_t header_size =
     sizeof(flash_multi_write_chunks_t) +
-    sizeof(flash_multi_write_chunk_t) * count;
+    sizeof(flash_multi_write_chunk_t) * output_chunks;
 
   uint32_t image_size = header_size + total_load_size;
 
@@ -54,21 +59,27 @@ mbus_ota_elf_perform_s(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
   flash_multi_write_chunks_t *c = image;
 
   uint32_t src_offset = header_size;
-  c->num_chunks = count;
+  c->num_chunks = output_chunks;
   int fail = 0;
+  int j = 0;
   for(size_t i = 0; i < count; i++) {
-    c->chunks[i].src_offset = src_offset;
-    c->chunks[i].dst_offset = phdr[i].p_paddr;
-    c->chunks[i].length = phdr[i].p_filesz;
+    if(phdr[i].p_type != 1)
+      continue;
+    c->chunks[j].src_offset = src_offset;
+    c->chunks[j].dst_offset = phdr[i].p_paddr;
+    c->chunks[j].length = phdr[i].p_filesz;
     src_offset += phdr[i].p_filesz;
-    mbus_log(m, "OTA: Section %zd From 0x%08x to 0x%08x size:0x%x",
-           i,
-           c->chunks[i].src_offset,
-           c->chunks[i].dst_offset,
-           c->chunks[i].length);
-    if(pread(fd, image + c->chunks[i].src_offset,
-             c->chunks[i].length, phdr[i].p_offset) != c->chunks[i].length)
+    mbus_log(m, "OTA: Section %zd From 0x%08x to 0x%08x size:0x%x | %x %x",
+             i,
+             c->chunks[j].src_offset,
+             c->chunks[j].dst_offset,
+             c->chunks[j].length,
+             phdr[i].p_type,
+             phdr[i].p_flags);
+    if(pread(fd, image + c->chunks[j].src_offset,
+             c->chunks[j].length, phdr[i].p_offset) != c->chunks[j].length)
       fail = 1;
+    j++;
   }
 
   if(fail)
