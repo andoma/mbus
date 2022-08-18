@@ -166,44 +166,39 @@ mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path,
   mbus_error_t err;
 
   uint8_t loaded_build_id[20] = {0};
+  char loaded_appname[32] = {0};
 
   uint8_t running_build_id[20];
   size_t running_build_id_size = sizeof(running_build_id);
   err = mbus_invoke(m, target_addr, "buildid", NULL, 0,
                     running_build_id, &running_build_id_size, 1000);
-  if(err)
+  if(err) {
+    mbus_log(m, "OTA: Unable to invoke 'buildid' -- %s",
+             mbus_error_to_string(err));
     return err;
-
+  }
   char otamode;
   size_t otamode_size = sizeof(otamode);
   err = mbus_invoke(m, target_addr, "otamode", NULL, 0,
                     &otamode, &otamode_size, 1000);
-  if(err)
+  if(err) {
+    mbus_log(m, "OTA: Unable to invoke 'otamode' -- %s",
+             mbus_error_to_string(err));
     return err;
+  }
 
-  mbus_log(m, "OTA: Running build-id: %02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x Mode:'%c'",
-           running_build_id[0],
-           running_build_id[1],
-           running_build_id[2],
-           running_build_id[3],
-           running_build_id[4],
-           running_build_id[5],
-           running_build_id[6],
-           running_build_id[7],
-           running_build_id[8],
-           running_build_id[9],
-           running_build_id[10],
-           running_build_id[11],
-           running_build_id[12],
-           running_build_id[13],
-           running_build_id[14],
-           running_build_id[15],
-           running_build_id[16],
-           running_build_id[17],
-           running_build_id[18],
-           running_build_id[19],
-           otamode);
+  char appname[32] = {0};
+  size_t appname_size = sizeof(appname) - 1;
+  err = mbus_invoke(m, target_addr, "appname", NULL, 0,
+                    appname, &appname_size, 1000);
+  if(err) {
+    mbus_log(m, "OTA: Unable to invoke 'appname' -- %s",
+             mbus_error_to_string(err));
+  } else {
+    mbus_log(m, "OTA: Running application: %s", appname);
+  }
+
+
 
   int fd = open(path, O_RDONLY);
   if(fd == -1)
@@ -234,8 +229,50 @@ mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path,
       if(data->d_size == 0x24) {
         memcpy(loaded_build_id, data->d_buf + 0x10, 20);
       }
+    } else if(!strcmp(name, ".appname")) {
+      Elf_Data *data = elf_getdata(scn, NULL);
+      if(data->d_size < 32) {
+        memcpy(loaded_appname, data->d_buf, data->d_size);
+      }
     }
   }
+
+  if(loaded_appname[0]) {
+    mbus_log(m, "OTA:  Loaded application: %s", loaded_appname);
+
+    if(appname[0] && loaded_appname[0]) {
+      if(strcmp(appname, loaded_appname)) {
+        mbus_log(m, "OTA: Update rejected, appname mismatches");
+        return MBUS_ERR_MISMATCH;
+      }
+    }
+  }
+
+  mbus_log(m, "OTA: Running build-id: %02x%02x%02x%02x%02x%02x%02x%02x"
+           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x Mode:'%c'",
+           running_build_id[0],
+           running_build_id[1],
+           running_build_id[2],
+           running_build_id[3],
+           running_build_id[4],
+           running_build_id[5],
+           running_build_id[6],
+           running_build_id[7],
+           running_build_id[8],
+           running_build_id[9],
+           running_build_id[10],
+           running_build_id[11],
+           running_build_id[12],
+           running_build_id[13],
+           running_build_id[14],
+           running_build_id[15],
+           running_build_id[16],
+           running_build_id[17],
+           running_build_id[18],
+           running_build_id[19],
+           otamode);
+
+
   mbus_log(m, "OTA:  Loaded build-id: %02x%02x%02x%02x%02x%02x%02x%02x"
            "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
            loaded_build_id[0],
