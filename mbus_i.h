@@ -27,8 +27,10 @@ typedef struct mbus {
   LIST_HEAD(, mbus_dsig_driver) m_dsig_drivers;
   LIST_HEAD(, mbus_dsig_sub) m_dsig_subs;
 
+#ifdef MBUS_ENABLE_PCS
   pcs_iface_t *m_pcs;
   pthread_t m_pcs_thread;
+#endif
 
   struct mbus_gateway *m_gateway;
 

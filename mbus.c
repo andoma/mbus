@@ -237,7 +237,7 @@ static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len,
 static void mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len,
                           uint8_t src_addr);
 
-
+#ifdef MBUS_ENABLE_PCS
 pcs_iface_t *
 mbus_get_pcs_iface(mbus_t *m)
 {
@@ -275,7 +275,7 @@ pcs_thread(void *arg)
   }
   return NULL;
 }
-
+#endif
 
 static int
 get_delta_time(mbus_t *m)
@@ -332,9 +332,10 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
 
   pthread_create(&m->m_timer_thread, NULL, timer_thread, m);
 
+#ifdef MBUS_ENABLE_PCS
   m->m_pcs = pcs_iface_create(m, 64, NULL);
-
   pthread_create(&m->m_pcs_thread, NULL, pcs_thread, m);
+#endif
 
 }
 
@@ -451,7 +452,9 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 
   if(pkt[1] & 0x80 && dst_addr == m->m_our_addr) {
     // PCS
+#ifdef MBUS_ENABLE_PCS
     pcs_input(m->m_pcs, pkt + 1, len - 1, mbus_get_ts(), src_addr);
+#endif
     return;
   }
 

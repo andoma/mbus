@@ -11,7 +11,9 @@ extern "C" {
 #include <stdint.h>
 #include <sys/time.h>
 
+#ifdef MBUS_ENABLE_PCS
 #include "pcs/pcs.h"
+#endif
 
 #define MBUS_OP_PING 0
 #define MBUS_OP_PONG 1
@@ -127,7 +129,9 @@ void mbus_dsig_set(mbus_t *m,
 
 void mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd);
 
+#ifdef MBUS_ENABLE_PCS
 pcs_iface_t *mbus_get_pcs_iface(mbus_t *m);
+#endif
 
 void mbus_destroy(mbus_t *mbus);
 
