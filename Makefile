@@ -10,7 +10,7 @@ SRCS += \
 	remote_shell.c \
 	main.c
 
-CFLAGS += ${shell pkg-config --cflags libusb-1.0 libelf}
+CFLAGS += ${shell pkg-config --cflags libusb-1.0 libelf} -DMBUS_ENABLE_PCS
 LDFLAGS += ${shell pkg-config --libs libusb-1.0 libelf}
 
 #CFLAGS += -fsanitize=address

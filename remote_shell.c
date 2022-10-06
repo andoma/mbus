@@ -1,5 +1,6 @@
 #include "remote_shell.h"
 
+#include <pthread.h>
 #include <unistd.h>
 #include <termios.h>
 #include <stdio.h>
