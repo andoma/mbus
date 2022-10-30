@@ -5,6 +5,7 @@
 #include <libelf.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include <fcntl.h>
 #include <sys/param.h>
@@ -77,13 +78,16 @@ mbus_ota_elf_perform_s(mbus_t *m, uint8_t target_addr, Elf *elf, int fd)
              phdr[i].p_type,
              phdr[i].p_flags);
     if(pread(fd, image + c->chunks[j].src_offset,
-             c->chunks[j].length, phdr[i].p_offset) != c->chunks[j].length)
+             c->chunks[j].length, phdr[i].p_offset) != c->chunks[j].length) {
+      mbus_log(m, "Failed to load data into memory from file");
       fail = 1;
+    }
     j++;
   }
 
-  if(fail)
+  if(fail) {
     return MBUS_ERR_OPERATION_FAILED;
+  }
 
   mbus_error_t err = mbus_ota(m, target_addr, image, image_size, 's');
   free(image);
@@ -201,8 +205,10 @@ mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path,
 
 
   int fd = open(path, O_RDONLY);
-  if(fd == -1)
+  if(fd == -1) {
+    mbus_log(m, "Unable to open %s -- %s", path, strerror(errno));
     return MBUS_ERR_OPERATION_FAILED;
+  }
 
   elf_version(EV_CURRENT);
 
