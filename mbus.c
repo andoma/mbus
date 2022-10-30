@@ -975,15 +975,15 @@ mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len, uint8_t src_addr)
 
   const uint32_t block = pkt[0] | (pkt[1] << 8) | (pkt[2] << 16);
   if(block == 0xffffff) {
-    printf("OTA Block COMPLETED\n");
+    printf("OTA Completed\n");
     // Done
     m->m_ota_xfer_error = len > 3 ? -((mbus_error_t)pkt[3]) : 0;
     m->m_ota_completed = 1;
     pthread_cond_signal(&m->m_ota_cond);
     return;
   }
-  printf("OTA Block %d\n", block);
-
+  printf("OTA Block %d\r", block);
+  fflush(stdout);
   uint8_t out[4 + 16];
   out[0] = MBUS_OP_OTA_XFER;
   out[1] = block;
