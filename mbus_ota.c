@@ -340,7 +340,7 @@ mbus_ota(mbus_t *m, uint8_t target_addr,
   ota_req_t req = { image_size / 16, ~mbus_crc32(0, image, image_size),
                     mbus_get_local_addr(m), type};
 
-  struct timespec deadline = mbus_deadline_from_timeout(1000);
+  struct timespec deadline = mbus_deadline_from_timeout(5000);
 
   mbus_error_t err = mbus_invoke_locked(m, target_addr,
                                         "ota", &req, sizeof(req),
@@ -351,6 +351,8 @@ mbus_ota(mbus_t *m, uint8_t target_addr,
       pthread_cond_wait(&m->m_ota_cond, &m->m_mutex);
     }
     err = m->m_ota_xfer_error;
+  } else {
+    mbus_log(m, "OTA: start command failed");
   }
 
   m->m_ota_image = NULL;

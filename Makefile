@@ -17,5 +17,5 @@ LDFLAGS += ${shell pkg-config --libs libusb-1.0 libelf}
 
 LDFLAGS += -lpthread
 
-mbus: Makefile mbus.h ${SRCS}
+mbus: Makefile mbus.h mbus_i.h ${SRCS} pcs/pcs.h
 	gcc -O2 -g -Wall -Werror -o $@ ${CFLAGS} ${SRCS} ${LDFLAGS}

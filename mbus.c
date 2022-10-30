@@ -245,8 +245,6 @@ mbus_get_pcs_iface(mbus_t *m)
 }
 
 
-
-
 static int64_t
 pcs_thread_wait_helper(pthread_cond_t *c,
                        pthread_mutex_t *m,
@@ -328,15 +326,15 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
 #endif
   pthread_cond_init(&m->m_dsig_driver_cond, &attr);
   pthread_cond_init(&m->m_ota_cond, &attr);
-  pthread_condattr_destroy(&attr);
 
   pthread_create(&m->m_timer_thread, NULL, timer_thread, m);
 
 #ifdef MBUS_ENABLE_PCS
-  m->m_pcs = pcs_iface_create(m, 64, NULL);
+  m->m_pcs = pcs_iface_create(m, 64, NULL, &attr);
   pthread_create(&m->m_pcs_thread, NULL, pcs_thread, m);
 #endif
 
+  pthread_condattr_destroy(&attr);
 }
 
 void

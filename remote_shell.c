@@ -21,6 +21,7 @@ send_thread(void *arg)
       break;
     for(int i = 0; i < r; i++) {
       if(buf[i] == 2) {
+        fprintf(stderr, "^B\n");
         pcs_shutdown(pcs);
         return NULL;
       }

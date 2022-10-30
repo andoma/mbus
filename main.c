@@ -61,14 +61,16 @@ main(int argc, char **argv)
   } else if(!strcmp(argv[0], "ping-f")) {
     time_t t0 = time(NULL);
     int pps = 0;
+    int errors = 0;
     while(1) {
-      err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 1000);
+      err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 100);
       if(err)
-        break;
-      pps++;
+        errors++;
+      else
+        pps++;
       const time_t now = time(NULL);
       if(now != t0) {
-        printf("%d pps\n", pps);
+        printf("%d pps %d errors (total)\n", pps, errors);
         pps = 0;
         t0 = now;
       }
