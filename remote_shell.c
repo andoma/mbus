@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "mbus_i.h"
+
 static void *
 send_thread(void *arg)
 {
@@ -79,5 +81,50 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr)
   tcsetattr(0, TCSANOW, &termio);
 
   printf("\n* Disconnected\n");
+  return 0;
+}
+
+const char level2str[8][7] = {
+  "EMERG ",
+  "ALERT ",
+  "CRIT  ",
+  "ERROR ",
+  "WARN  ",
+  "NOTICE",
+  "INFO  ",
+  "DEBUG "
+};
+
+
+mbus_error_t
+mbus_remote_log(mbus_t *m, uint8_t target_addr)
+{
+  pcs_iface_t *pi = mbus_get_pcs_iface(m);
+  pcs_t *pcs = pcs_connect(pi, 0x81, mbus_get_ts(), target_addr);
+
+  uint8_t buf[512];
+  while(1) {
+    int r = pcs_read(pcs, buf, 1, 1);
+    if(r <= 0)
+      break;
+
+    int len = buf[0];
+    if(len == 0)
+      break;
+    r = pcs_read(pcs, buf + 1, len - 1, len - 1);
+    if(buf[1] & 0x80) {
+      // sequence sync
+      continue;
+    }
+    uint8_t level = buf[1] & 7;
+    uint8_t tslen = (buf[1] >> 3) & 7;
+    len -= 2 + tslen;
+
+    if(len < 1)
+      continue;
+    printf("%s | %.*s\n", level2str[level], len, buf + 2 + tslen);
+    fflush(stdout);
+  }
+
   return 0;
 }

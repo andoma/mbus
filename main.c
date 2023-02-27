@@ -95,6 +95,10 @@ main(int argc, char **argv)
 
     err = mbus_remote_shell(m, target_addr);
 
+  } else if(!strcmp(argv[0], "log")) {
+
+    err = mbus_remote_log(m, target_addr);
+
   } else if(!strcmp(argv[0], "gateway")) {
     if(argc < 2) {
       fprintf(stderr, "Missing argument: port\n");
