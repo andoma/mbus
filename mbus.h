@@ -11,10 +11,6 @@ extern "C" {
 #include <stdint.h>
 #include <sys/time.h>
 
-#ifdef MBUS_ENABLE_PCS
-#include "pcs/pcs.h"
-#endif
-
 #define MBUS_OP_PING 0
 #define MBUS_OP_PONG 1
 #define MBUS_OP_PUB_META 2
@@ -68,6 +64,14 @@ typedef enum {
     MBUS_ERR_INVALID_LENGTH        = -24,
     MBUS_ERR_NOT_IDLE              = -25,
     MBUS_ERR_BAD_CONFIG            = -26,
+    MBUS_ERR_FLASH_HW_ERROR        = -27,
+    MBUS_ERR_FLASH_TIMEOUT         = -28,
+    MBUS_ERR_NO_MEMORY             = -29,
+    MBUS_ERR_READ_PROTECTED        = -30,
+    MBUS_ERR_WRITE_PROTECTED       = -31,
+    MBUS_ERR_AGAIN                 = -32,
+    MBUS_ERR_NOT_CONNECTED         = -33,
+    MBUS_ERR_BAD_PKT_SIZE          = -34,
 } mbus_error_t;
 
 typedef enum {
@@ -111,13 +115,14 @@ const char *mbus_error_to_string(mbus_error_t err);
 typedef struct mbus_dsig_sub mbus_dsig_sub_t;
 
 mbus_dsig_sub_t *mbus_dsig_sub(mbus_t *m,
-                               uint8_t signal,
+                               uint16_t signal,
                                void (*cb)(void *opaque, const uint8_t *data,
                                           size_t len),
-                               void *opaque);
+                               void *opaque,
+                               int64_t ttl);
 
-mbus_error_t  mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
-                             size_t len, uint8_t ttl);
+mbus_error_t  mbus_dsig_emit(mbus_t *m, uint16_t signal, const void *data,
+                             size_t len);
 
 typedef struct mbus_dsig_driver mbus_dsig_driver_t;
 
@@ -129,20 +134,31 @@ void mbus_dsig_set(mbus_t *m,
 
 void mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd);
 
-#ifdef MBUS_ENABLE_PCS
-pcs_iface_t *mbus_get_pcs_iface(mbus_t *m);
-#endif
+
+
+typedef struct mbus_seqpkt_con mbus_seqpkt_con_t;
+
+mbus_seqpkt_con_t *mbus_seqpkt_connect(mbus_t *m,
+                                       uint8_t remote_addr,
+                                       const char *service);
+
+mbus_error_t mbus_seqpkt_send(mbus_seqpkt_con_t *msc, const void *data,
+                              size_t len);
+
+int mbus_seqpkt_recv(mbus_seqpkt_con_t *msc, void **ptr);
+
+void mbus_seqpkt_shutdown(mbus_seqpkt_con_t *msc);
+
+void mbus_seqpkt_close(mbus_seqpkt_con_t *msc, int wait);
 
 void mbus_destroy(mbus_t *mbus);
 
-uint16_t mbus_get_active_hosts(mbus_t *m);
+uint32_t mbus_get_active_hosts(mbus_t *m);
 
-mbus_error_t mbus_ota(mbus_t *m, uint8_t target_addr,
-                      const void *image, size_t image_size,
-                      char type);
+mbus_error_t mbus_ping(mbus_t *m, uint8_t remote_addr);
 
-mbus_error_t mbus_ota_elf(mbus_t *m, uint8_t target_addr, const char *path,
-                          int force_upgrade);
+mbus_error_t mbus_ota(mbus_t *m, uint8_t target_addr, const char *path,
+                      int force_upgrade);
 
 #ifdef __cplusplus
 }

@@ -57,12 +57,6 @@ mbus_create_from_constr(const char *str0, uint8_t local_addr,
     return mbus_create_tcp(argv[1], // Hostname
                            atoi(argv[2]), // Port
                            local_addr, log_cb, aux);
-  } else if(argc >= 2 && !strcmp(argv[0], "serial")) {
-    return mbus_create_serial(argv[1], // Device
-                              argc > 2 ? atoi(argv[2]) : 230400, // Baudrate
-                              local_addr,
-                              argc > 3 ? !strcmp(argv[3], "fd") : 0,
-                              log_cb, aux);
   } else if(argc >= 3 && !strcmp(argv[0], "usb")) {
     return mbus_create_usb(strtol(argv[1], NULL, 16),    // VID
                            strtol(argv[2], NULL, 16),    // PID
@@ -231,49 +225,9 @@ typedef struct mbus_rpc mbus_rpc_t;
 
 static void *timer_thread(void *aux);
 
-static void dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len,
-                        uint8_t src_addr);
-
-static void mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len,
-                          uint8_t src_addr);
-
-#ifdef MBUS_ENABLE_PCS
-pcs_iface_t *
-mbus_get_pcs_iface(mbus_t *m)
-{
-  return m->m_pcs;
-}
+static void dsig_handle(mbus_t *m, uint16_t signal, const uint8_t *pkt, size_t len);
 
 
-static int64_t
-pcs_thread_wait_helper(pthread_cond_t *c,
-                       pthread_mutex_t *m,
-                       int64_t deadline)
-{
-  struct timespec ts = usec_to_timespec(deadline);
-  pthread_cond_timedwait(c, m, &ts);
-  return mbus_get_ts();
-}
-
-
-static void *
-pcs_thread(void *arg)
-{
-  mbus_t *m = arg;
-  uint8_t txbuf[64];
-
-
-  while(1) {
-    pcs_poll_result_t ppr = pcs_wait(m->m_pcs, txbuf, sizeof(txbuf),
-                                     mbus_get_ts(), pcs_thread_wait_helper);
-
-    pthread_mutex_lock(&m->m_mutex);
-    m->m_send(m, ppr.addr, txbuf, ppr.len, NULL);
-    pthread_mutex_unlock(&m->m_mutex);
-  }
-  return NULL;
-}
-#endif
 
 static int
 get_delta_time(mbus_t *m)
@@ -317,6 +271,8 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
   m->m_log_cb = log_cb ?: def_log_cb;
   m->m_aux = log_cb ? aux : m;
 
+  m->m_connection_id_gen = rand();
+
   pthread_mutex_init(&m->m_mutex, NULL);
 
   pthread_condattr_t attr;
@@ -324,15 +280,9 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
 #ifdef __linux__
   pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
 #endif
-  pthread_cond_init(&m->m_dsig_driver_cond, &attr);
-  pthread_cond_init(&m->m_ota_cond, &attr);
+  pthread_cond_init(&m->m_timer_cond, &attr);
 
   pthread_create(&m->m_timer_thread, NULL, timer_thread, m);
-
-#ifdef MBUS_ENABLE_PCS
-  m->m_pcs = pcs_iface_create(m, 64, NULL, &attr);
-  pthread_create(&m->m_pcs_thread, NULL, pcs_thread, m);
-#endif
 
   pthread_condattr_destroy(&attr);
 }
@@ -344,77 +294,12 @@ mbus_destroy(mbus_t *m)
 }
 
 
-mbus_rpc_t *
-mbus_get_pending(mbus_t *m, const uint8_t* pkt, size_t len,
-                 uint8_t addr)
-{
-  if(len < 1)
-    return NULL;
-
-  uint8_t txid = pkt[0];
-
-  mbus_rpc_t* mr;
-  LIST_FOREACH(mr, &m->m_rpcs, mr_link) {
-    if(mr->mr_txid == txid && mr->mr_remote_addr == addr)
-      return mr;
-  }
-  return NULL;
-}
-
-
-static void
-mr_completed(mbus_rpc_t* mr)
-{
-  mr->mr_completed = 1;
-  pthread_cond_signal(&mr->mr_cond);
-}
-
-
-void
-mbus_cancel_rpc(mbus_t *m)
-{
-  mbus_rpc_t* mr;
-  LIST_FOREACH(mr, &m->m_rpcs, mr_link) {
-    mr->mr_error = MBUS_ERR_TIMEOUT;
-    mr_completed(mr);
-  }
-}
-
-
 void
 mbus_pkt_trace(const mbus_t *m, const char *prefix,
                const uint8_t *pkt, size_t len)
 {
-  if(!m->m_debug_level)
-    return;
-
-  const uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
-  const uint8_t dst_addr = pkt[0] & 0x0f;
-
-  if(m->m_debug_level >= 2) {
-
-    if(pkt[1] & 0x80 && len >= 8) {
-      mbus_log(m,
-               "%s: 0x%x -> 0x%x PCS: CH:0x%02x %c%c%c%c%c%c F:0x%02x ACK:0x%04x SEQ:0x%04x %d",
-               prefix,
-               src_addr, dst_addr,
-               pkt[1],
-               pkt[2] & 0x1  ? 'S' : ' ',
-               pkt[2] & 0x2  ? '2' : ' ',
-               pkt[2] & 0x4  ? 'E' : ' ',
-               pkt[2] & 0x8  ? 'L' : ' ',
-               pkt[2] & 0x10 ? 'P' : ' ',
-               pkt[2] & 0x20 ? 'I' : ' ',
-               pkt[3],
-               pkt[5] | (pkt[4] << 8),
-               pkt[7] | (pkt[6] << 8),
-               len - 8);
-    } else {
-      mbus_log(m, "%s: 0x%x -> 0x%x", prefix, src_addr, dst_addr);
-    }
-    if(m->m_debug_level >= 3) {
-      mbus_hexdump(m, prefix, pkt, len);
-    }
+  if(m->m_debug_level >= 3) {
+    mbus_hexdump(m, prefix, pkt, len);
   }
 }
 
@@ -422,229 +307,49 @@ mbus_pkt_trace(const mbus_t *m, const char *prefix,
 void
 mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 {
+  mbus_pkt_trace(m, "RX", pkt, len);
+
   if(check_crc) {
     if(len < 4 || ~mbus_crc32(0, pkt, len)) {
-      mbus_pkt_trace(m, "RX.CRC", pkt, len);
       return;
     }
     len -= 4;
   }
 
-  if(len < 2) {
-    return;
-  }
-
-  mbus_pkt_trace(m, "RX", pkt, len);
-
-  const uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
-  const uint8_t dst_addr = pkt[0] & 0x0f;
-
-  m->host_active[src_addr] = 2;
-
-  if(dst_addr != m->m_our_addr && dst_addr != 7)
+  if(len < 2)
     return;
 
-  if(m->m_gateway && mbus_gateway_intercept(m, pkt, len)) {
-    return;
-  }
+  uint32_t dst_addr = pkt[0];
+  if(dst_addr >= 32) {
+    // Multicast
+    const uint16_t signal = ((dst_addr & 0x1f) << 8) | pkt[1];
 
-  if(pkt[1] & 0x80 && dst_addr == m->m_our_addr) {
-    // PCS
-#ifdef MBUS_ENABLE_PCS
-    pcs_input(m->m_pcs, pkt + 1, len - 1, mbus_get_ts(), src_addr);
-#endif
-    return;
-  }
+    if(m->m_gateway)
+      mbus_gateway_recv_multicast(m, pkt, len);
 
-  uint8_t opcode = pkt[1] & 0x0f;
+    if(signal < 4096)
+      dsig_handle(m, signal, pkt + 2, len - 2);
 
-  /* Remove header */;
-  pkt += 2;
-  len -= 2;
+  } else {
 
-  mbus_rpc_t* mr;
-
-  switch (opcode) {
-
-  case MBUS_OP_RPC_RESOLVE_REPLY:
-    mr = mbus_get_pending(m, pkt, len, src_addr);
-    if(mr == NULL)
+    if(len < 3)
       return;
-    pkt++;
-    len--;
 
-    if(len == 0) {
-      mr->mr_error = MBUS_ERR_NOT_FOUND;
-    } else if(len != sizeof(uint32_t)) {
-      mr->mr_error = MBUS_ERR_MALFORMED;
+    const uint16_t flow = pkt[2] | ((pkt[1] << 3) & 0x300);
+    const uint8_t src_addr = pkt[1] & 0x1f;
+    const int init = pkt[1] & 0x80;
+
+    if(init) {
+      // Not really supported yet
     } else {
-      memcpy(mr->mr_reply, pkt, sizeof(uint32_t));
-      mr->mr_reply_len = sizeof(uint32_t);
-      mr->mr_error = 0;
-    }
-    mr_completed(mr);
-    break;
-
-  case MBUS_OP_RPC_REPLY:
-    mr = mbus_get_pending(m, pkt, len, src_addr);
-    if(mr == NULL)
-      return;
-    pkt++;
-    len--;
-
-    if(len > sizeof(mr->mr_reply)) {
-      mr->mr_error = MBUS_ERR_MTU_EXCEEDED;
-    } else {
-      memcpy(mr->mr_reply, pkt, len);
-      mr->mr_reply_len = len;
-      mr->mr_error = 0;
-    }
-    mr_completed(mr);
-    break;
-
-  case MBUS_OP_RPC_ERR:
-    mr = mbus_get_pending(m, pkt, len, src_addr);
-    if(mr == NULL)
-      return;
-    pkt++;
-    len--;
-
-    if(len == sizeof(uint32_t)) {
-      memcpy(&mr->mr_error, pkt, sizeof(uint32_t));
-    } else {
-      mr->mr_error = MBUS_ERR_MALFORMED;
-    }
-    mr_completed(mr);
-    break;
-
-  case MBUS_OP_DSIG_EMIT:
-    dsig_handle(m, pkt, len, src_addr);
-    break;
-
-  case MBUS_OP_OTA_XFER:
-    mbus_ota_xfer(m, pkt, len, src_addr);
-    break;
-
-  default:
-    break;
-  }
-}
-
-
-static void
-mbus_rpc_init(mbus_rpc_t* mr, mbus_t *m, uint8_t addr)
-{
-  memset(mr, 0, sizeof(mbus_rpc_t));
-
-  pthread_condattr_t attr;
-  pthread_condattr_init(&attr);
-#ifdef __linux__
-  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-#endif
-  pthread_cond_init(&mr->mr_cond, &attr);
-  pthread_condattr_destroy(&attr);
-
-  mr->mr_txid = ++m->m_txid_gen[addr & 0xf];
-  mr->mr_remote_addr = addr;
-}
-
-
-static void
-mbus_rpc_wait(mbus_rpc_t* mr, mbus_t *m,
-              const struct timespec* deadline)
-{
-  LIST_INSERT_HEAD(&m->m_rpcs, mr, mr_link);
-  while (!mr->mr_completed) {
-    if(pthread_cond_timedwait(&mr->mr_cond, &m->m_mutex, deadline) ==
-       ETIMEDOUT) {
-      mr->mr_error = MBUS_ERR_TIMEOUT;
-      break;
+      mbus_flow_t *mf = mbus_flow_find(m, src_addr, flow);
+      if(mf != NULL) {
+        mf->mf_input(m, mf, pkt + 3, len - 3);
+      } else {
+        mbus_log(m, "No flow for %d:%d", src_addr, flow);
+      }
     }
   }
-  LIST_REMOVE(mr, mr_link);
-}
-
-
-static mbus_error_t
-mbus_resolve_id(mbus_t *m, uint8_t addr, const char *name,
-                uint32_t* idp,
-                const struct timespec* deadline,
-                int overwrite)
-{
-  mbus_method_t *mm;
-  LIST_FOREACH(mm, &m->m_methods, mm_link) {
-    if(mm->mm_addr == addr && !strcmp(mm->mm_name, name)) {
-      if(overwrite)
-        break;
-      *idp = mm->mm_id;
-      return 0;
-    }
-  }
-
-  mbus_rpc_t mr;
-  mbus_rpc_init(&mr, m, addr);
-
-  const size_t namelen = strlen(name);
-  const size_t reqlen = 1 + 1 + namelen;
-  uint8_t req[reqlen];
-  req[0] = MBUS_OP_RPC_RESOLVE;
-  req[1] = mr.mr_txid;
-  memcpy(req + 2, name, namelen);
-  mbus_error_t err = m->m_send(m, addr, req, reqlen, deadline);
-  if(err)
-    return err;
-
-  mbus_rpc_wait(&mr, m, deadline);
-
-  if(mr.mr_error)
-    return mr.mr_error;
-
-  memcpy(idp, mr.mr_reply, sizeof(uint32_t));
-
-  if(mm == NULL) {
-    mm = malloc(sizeof(mbus_method_t) + namelen + 1);
-    LIST_INSERT_HEAD(&m->m_methods, mm, mm_link);
-    strcpy(mm->mm_name, name);
-    mm->mm_addr = addr;
-  }
-  mm->mm_id = *idp;
-  return 0;
-}
-
-
-static mbus_error_t
-mbus_invoke_id(mbus_t *m, uint8_t addr, uint32_t method_id,
-               const void *req, size_t req_size,
-               void *reply, size_t* reply_size,
-               const struct timespec* deadline)
-{
-  mbus_rpc_t mr;
-  mbus_rpc_init(&mr, m, addr);
-
-  const size_t pktlen = 1 + 1 + 4 + req_size;
-  uint8_t pkt[pktlen];
-  pkt[0] = MBUS_OP_RPC_INVOKE;
-  pkt[1] = mr.mr_txid;
-  memcpy(pkt + 2, &method_id, sizeof(uint32_t));
-  memcpy(pkt + 6, req, req_size);
-  mbus_error_t err = m->m_send(m, addr, pkt, pktlen, deadline);
-  if(err)
-    return err;
-
-  mbus_rpc_wait(&mr, m, deadline);
-
-  if(mr.mr_error)
-    return mr.mr_error;
-
-  if(reply && reply_size) {
-    if(*reply_size >= mr.mr_reply_len) {
-      *reply_size = mr.mr_reply_len;
-      memcpy(reply, mr.mr_reply, mr.mr_reply_len);
-    } else {
-      return MBUS_ERR_NO_BUFFER;
-    }
-  }
-  return 0;
 }
 
 
@@ -655,35 +360,66 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
                    size_t* reply_size,
                    const struct timespec* deadline)
 {
-  uint32_t method_id;
+
+  mbus_seqpkt_con_t *c;
+
+  const size_t namelen = strlen(name);
+  const size_t hdrlen = (1 + namelen + 3) & ~3;
 
   for(int i = 0; i < 2; i++) {
-    mbus_error_t err = mbus_resolve_id(m, addr, name, &method_id, deadline,
-                                       i == 1);
-    if(err)
-      return err;
+    c = m->m_rpc_channels[addr];
+    if(c == NULL) {
+      c = mbus_seqpkt_connect_locked(m, addr, "rpc");
+    } else {
+      m->m_rpc_channels[addr] = NULL;
+    }
 
-    err = mbus_invoke_id(m, addr, method_id, req, req_size, reply, reply_size,
-                         deadline);
-    if(err == MBUS_ERR_INVALID_RPC_ID)
+    uint8_t opkt[hdrlen + req_size];
+    opkt[0] = namelen;
+    memcpy(opkt + 1, name, namelen);
+    memcpy(opkt + hdrlen, req, req_size);
+
+    mbus_seqpkt_send_locked(c, opkt, hdrlen + req_size);
+
+    void *ipkt;
+    int res = mbuf_seqpkt_recv_locked(c, &ipkt, m);
+    if(res < 4) {
+      mbus_seqpkt_shutdown_locked(c);
       continue;
+    }
+
+    uint32_t err;
+    memcpy(&err, ipkt, sizeof(err));
+    if(!err) {
+      size_t received_size = res - 4;
+      if(reply_size && *reply_size >= res) {
+        memcpy(reply, ipkt + 4, received_size);
+        *reply_size = received_size;
+      }
+    }
+    free(ipkt);
+    if(m->m_rpc_channels[addr] == NULL) {
+      m->m_rpc_channels[addr] = c;
+    } else {
+      mbus_seqpkt_shutdown_locked(c);
+    }
+
     return err;
   }
-  return MBUS_ERR_INVALID_RPC_ID;
+
+  return MBUS_ERR_OPERATION_FAILED;
+
 }
-
-
-
 
 mbus_error_t
 mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
             const void *req, size_t req_size, void *reply,
             size_t* reply_size, int timeout_ms)
 {
-  struct timespec deadline = mbus_deadline_from_timeout(timeout_ms);
   pthread_mutex_lock(&m->m_mutex);
+
   mbus_error_t err = mbus_invoke_locked(m, addr, name, req, req_size, reply,
-                                        reply_size, &deadline);
+                                        reply_size, NULL);
   pthread_mutex_unlock(&m->m_mutex);
   return err;
 }
@@ -747,32 +483,46 @@ mbus_error_to_string(mbus_error_t err)
     return "NOT_IDLE";
   case MBUS_ERR_BAD_CONFIG:
     return "BAD_CONFIG";
-
+  case MBUS_ERR_FLASH_HW_ERROR:
+    return "FLASH_HW_ERROR";
+  case MBUS_ERR_FLASH_TIMEOUT:
+    return "FLASH_TIMEOUT";
+  case MBUS_ERR_NO_MEMORY:
+    return "NO_MEMORY";
+  case MBUS_ERR_READ_PROTECTED:
+    return "READ_PROTECTED";
+  case MBUS_ERR_WRITE_PROTECTED:
+    return "WRITE_PROTECTED";
+  case MBUS_ERR_AGAIN:
+    return "AGAIN";
+  case MBUS_ERR_NOT_CONNECTED:
+    return "NOT_CONNECTED";
+  case MBUS_ERR_BAD_PKT_SIZE:
+    return "BAD_PKT_SIZE";
   }
   return "???";
 }
 
 mbus_error_t
-mbus_dsig_emit_locked(mbus_t *m, uint8_t signal, const void *data,
-                      size_t len, uint8_t ttl)
+mbus_dsig_emit_locked(mbus_t *m, uint16_t signal, const void *data,
+                      size_t len)
 {
-  const size_t reqlen = 3 + len;
+  const size_t pktlen = 2 + len;
 
-  uint8_t req[reqlen];
-  req[0] = MBUS_OP_DSIG_EMIT;
-  req[1] = signal;
-  req[2] = ttl;
-  memcpy(req + 3, data, len);
-  return m->m_send(m, 0x7, req, reqlen, NULL);
+  uint8_t pkt[pktlen];
+  pkt[0] = 0x20 | (signal >> 8);
+  pkt[1] = signal;
+  memcpy(pkt + 2, data, len);
+  return m->m_send(m, pkt, pktlen, NULL);
 }
 
 
 mbus_error_t
-mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
-               size_t len, uint8_t ttl)
+mbus_dsig_emit(mbus_t *m, uint16_t signal, const void *data,
+               size_t len)
 {
   pthread_mutex_lock(&m->m_mutex);
-  mbus_error_t err = mbus_dsig_emit_locked(m, signal, data, len, ttl);
+  mbus_error_t err = mbus_dsig_emit_locked(m, signal, data, len);
   pthread_mutex_unlock(&m->m_mutex);
   return err;
 }
@@ -781,21 +531,21 @@ mbus_dsig_emit(mbus_t *m, uint8_t signal, const void *data,
 
 struct mbus_dsig_driver {
   LIST_ENTRY(mbus_dsig_driver) mdd_link;
-  uint8_t mdd_signal;
+  uint16_t mdd_signal;
   void *mdd_data;
   size_t mdd_length;
-  uint8_t mdd_ttl;
-  int64_t mdd_next_emit;
+  int64_t mdd_period;
+  mbus_timer_t mdd_timer;
 };
 
 
 struct mbus_dsig_sub {
   LIST_ENTRY(mbus_dsig_sub) mds_link;
-  uint8_t mds_signal;
-  uint8_t mds_src;
+  uint16_t mds_signal;
   void (*mds_cb)(void *opaque, const uint8_t *data, size_t len);
   void *mds_opaque;
-  int64_t mds_expire;
+  mbus_timer_t mds_timer;
+  int64_t mds_ttl;
 };
 
 
@@ -803,86 +553,106 @@ static void *
 timer_thread(void *aux)
 {
   mbus_t *m = aux;
-  mbus_dsig_driver_t *mdd;
-  mbus_dsig_sub_t *mds;
+
   pthread_mutex_lock(&m->m_mutex);
 
   while(1) {
+    mbus_timer_t *mt = LIST_FIRST(&m->m_timers);
+    if(mt == NULL) {
+      pthread_cond_wait(&m->m_timer_cond, &m->m_mutex);
+      continue;
+    }
+
     int64_t now = mbus_get_ts();
-    int64_t next_wakeup = now + 1000000;
 
-    if(now >= m->next_host_active_clear) {
-      m->next_host_active_clear = now + 1000000;
-      for(int i = 0; i < sizeof(m->host_active); i++) {
-        if(m->host_active[i])
-          m->host_active[i]--;
-      }
-    }
-
-    LIST_FOREACH(mdd, &m->m_dsig_drivers, mdd_link) {
-      if(mdd->mdd_next_emit == 0)
-        continue;
-      if(mdd->mdd_next_emit <= now) {
-        mbus_dsig_emit_locked(m, mdd->mdd_signal,
-                              mdd->mdd_data, mdd->mdd_length, mdd->mdd_ttl);
-
-        // Local echo
-        LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
-          if(mds->mds_signal == mdd->mdd_signal &&
-             m->m_our_addr >= mds->mds_src) {
-            mds->mds_src = m->m_our_addr;
-            mds->mds_cb(mds->mds_opaque, mdd->mdd_data, mdd->mdd_length);
-            mds->mds_expire = now + mdd->mdd_ttl * 100000;
-          }
-        }
-
-        if(mdd->mdd_length) {
-          mdd->mdd_next_emit = now + (1 + mdd->mdd_ttl) * 30000;
-        } else {
-          mdd->mdd_next_emit = 0;
-          continue;
-        }
-      }
-      next_wakeup = MIN(mdd->mdd_next_emit + 5000, next_wakeup);
-    }
-
-    LIST_FOREACH(mds, &m->m_dsig_subs, mds_link) {
-      if(mds->mds_expire <= now) {
-        mds->mds_src = 0;
-        mds->mds_cb(mds->mds_opaque, NULL, 0);
-        mds->mds_expire = INT64_MAX;
-      } else if(mds->mds_expire != INT64_MAX) {
-        next_wakeup = MIN(mds->mds_expire + 1000, next_wakeup);
-      }
-    }
-
-    if(next_wakeup == INT64_MAX) {
-      pthread_cond_wait(&m->m_dsig_driver_cond, &m->m_mutex);
-    } else {
+    if(mt->mt_expire > now) {
+      int64_t next_wakeup = mt->mt_expire;
       struct timespec ts = {.tv_sec = next_wakeup / 1000000LL,
                             .tv_nsec = (next_wakeup % 1000000LL) * 1000};
-      pthread_cond_timedwait(&m->m_dsig_driver_cond, &m->m_mutex, &ts);
+      pthread_cond_timedwait(&m->m_timer_cond, &m->m_mutex, &ts);
+      continue;
     }
+
+    LIST_REMOVE(mt, mt_link);
+    mt->mt_expire = 0;
+    mt->mt_cb(m, mt->mt_opaque, now);
   }
-  pthread_mutex_unlock(&m->m_mutex);
   return NULL;
+}
+
+static int
+timer_cmp(const mbus_timer_t *a, const mbus_timer_t *b)
+{
+  return a->mt_expire > b->mt_expire;
+}
+
+void
+mbus_timer_disarm(mbus_timer_t *mt)
+{
+  if(mt->mt_expire) {
+    LIST_REMOVE(mt, mt_link);
+    mt->mt_expire = 0;
+  }
+}
+
+#define LIST_INSERT_SORTED(head, elm, field, cmpfunc) do {	\
+        if(LIST_EMPTY(head)) {					\
+           LIST_INSERT_HEAD(head, elm, field);			\
+        } else {						\
+           typeof(elm) _tmp;					\
+           LIST_FOREACH(_tmp,head,field) {			\
+              if(cmpfunc(elm,_tmp) <= 0) {			\
+                LIST_INSERT_BEFORE(_tmp,elm,field);		\
+                break;						\
+              }							\
+              if(!LIST_NEXT(_tmp,field)) {			\
+                 LIST_INSERT_AFTER(_tmp,elm,field);		\
+                 break;						\
+              }							\
+           }							\
+        }							\
+} while(0)
+
+void
+mbus_timer_arm(mbus_t *m, mbus_timer_t *mt, int64_t expire)
+{
+  mbus_timer_disarm(mt);
+  mt->mt_expire = expire;
+  LIST_INSERT_SORTED(&m->m_timers, mt, mt_link, timer_cmp);
+  if(mt == LIST_FIRST(&m->m_timers))
+    pthread_cond_signal(&m->m_timer_cond);
+}
+
+
+
+
+static void
+dsig_drive_cb(mbus_t *m, void *opaque, int64_t expire)
+{
+  mbus_dsig_driver_t *mdd = opaque;
+
+  mbus_dsig_emit_locked(m, mdd->mdd_signal, mdd->mdd_data, mdd->mdd_length);
+  if(mdd->mdd_data)
+    mbus_timer_arm(m, &mdd->mdd_timer, mbus_get_ts() + mdd->mdd_period);
 }
 
 
 mbus_dsig_driver_t *
-mbus_dsig_drive(mbus_t *m, uint8_t signal, uint8_t ttl)
+mbus_dsig_drive2(mbus_t *m, uint8_t signal, int64_t period)
 {
   mbus_dsig_driver_t *mdd = calloc(1, sizeof(mbus_dsig_driver_t));
   mdd->mdd_signal = signal;
-  mdd->mdd_next_emit = 0;
-  mdd->mdd_ttl = ttl;
+  mdd->mdd_period = period;
   mdd->mdd_data = NULL;
   mdd->mdd_length = 0;
+  mdd->mdd_timer.mt_cb = dsig_drive_cb;
+  mdd->mdd_timer.mt_opaque = mdd;
   pthread_mutex_lock(&m->m_mutex);
   LIST_INSERT_HEAD(&m->m_dsig_drivers, mdd, mdd_link);
   pthread_mutex_unlock(&m->m_mutex);
   return mdd;
 }
+
 
 void
 mbus_dsig_set(mbus_t *m,
@@ -894,12 +664,13 @@ mbus_dsig_set(mbus_t *m,
   if(mdd->mdd_data == NULL ||
      len != mdd->mdd_length ||
      memcmp(mdd->mdd_data, data, len)) {
+
     free(mdd->mdd_data);
     mdd->mdd_data = malloc(len);
     mdd->mdd_length = len;
-    mdd->mdd_next_emit = 1;
     memcpy(mdd->mdd_data, data, len);
-    pthread_cond_signal(&m->m_dsig_driver_cond);
+
+    mbus_timer_arm(m, &mdd->mdd_timer, mbus_get_ts());
   }
   pthread_mutex_unlock(&m->m_mutex);
 }
@@ -913,43 +684,52 @@ mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd)
     free(mdd->mdd_data);
     mdd->mdd_data = NULL;
     mdd->mdd_length = 0;
-    mdd->mdd_next_emit = 1;
-    pthread_cond_signal(&m->m_dsig_driver_cond);
-  }
+    mbus_timer_arm(m, &mdd->mdd_timer, mbus_get_ts());
+   }
   pthread_mutex_unlock(&m->m_mutex);
+}
+
+
+static void
+dsig_sub_cb(mbus_t *m, void *opaque, int64_t expire)
+{
+  mbus_dsig_sub_t *mds = opaque;
+  mds->mds_cb(mds->mds_opaque, NULL, 0);
 }
 
 
 mbus_dsig_sub_t *
 mbus_dsig_sub(mbus_t *m,
-              uint8_t signal,
+              uint16_t signal,
               void (*cb)(void *opaque, const uint8_t *data, size_t len),
-              void *opaque)
+              void *opaque,
+              int64_t ttl)
+
 {
   mbus_dsig_sub_t *mds = calloc(1, sizeof(mbus_dsig_sub_t));
   mds->mds_signal = signal;
   mds->mds_cb = cb;
   mds->mds_opaque = opaque;
-  mds->mds_expire = INT64_MAX;
+  mds->mds_ttl = ttl;
+  mds->mds_timer.mt_cb = dsig_sub_cb;
+  mds->mds_timer.mt_opaque = mds;
+
   pthread_mutex_lock(&m->m_mutex);
   LIST_INSERT_HEAD(&m->m_dsig_subs, mds, mds_link);
+  int64_t now = mbus_get_ts();
+  mbus_timer_arm(m, &mds->mds_timer, now + mds->mds_ttl);
   pthread_mutex_unlock(&m->m_mutex);
   return mds;
 }
 
 
+
 static void
-dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len, uint8_t remote_addr)
+dsig_handle(mbus_t *m, uint16_t signal, const uint8_t *pkt, size_t len)
 {
   mbus_dsig_sub_t *mds;
   if(len < 2)
     return;
-
-  uint8_t signal = pkt[0];
-  uint8_t ttl = pkt[1];
-
-  pkt += 2;
-  len -= 2;
 
   int64_t now = mbus_get_ts();
 
@@ -957,50 +737,88 @@ dsig_handle(mbus_t *m, const uint8_t *pkt, size_t len, uint8_t remote_addr)
     if(mds->mds_signal != signal)
       continue;
 
-    if(remote_addr >= mds->mds_src) {
-      mds->mds_src = remote_addr;
-      mds->mds_cb(mds->mds_opaque, pkt, len);
-      mds->mds_expire = now + ttl * 100000;
-      pthread_cond_signal(&m->m_dsig_driver_cond);
-    }
+    mds->mds_cb(mds->mds_opaque, pkt, len);
+
+    mbus_timer_arm(m, &mds->mds_timer, now + mds->mds_ttl);
   }
 }
 
-
-static void
-mbus_ota_xfer(mbus_t *m, const uint8_t *pkt, size_t len, uint8_t src_addr)
-{
-  if(m->m_ota_image == NULL)
-    return;
-
-  const uint32_t block = pkt[0] | (pkt[1] << 8) | (pkt[2] << 16);
-  if(block == 0xffffff) {
-    printf("OTA Completed\n");
-    // Done
-    m->m_ota_xfer_error = len > 3 ? -((mbus_error_t)pkt[3]) : 0;
-    m->m_ota_completed = 1;
-    pthread_cond_signal(&m->m_ota_cond);
-    return;
-  }
-  printf("OTA Block %d\r", block);
-  fflush(stdout);
-  uint8_t out[4 + 16];
-  out[0] = MBUS_OP_OTA_XFER;
-  out[1] = block;
-  out[2] = block >> 8;
-  out[3] = block >> 16;
-
-  memcpy(out + 4, m->m_ota_image + block * 16, 16);
-
-  m->m_send(m, src_addr, out, sizeof(out), NULL);
-}
 
 
 static mbus_error_t
-dummy_send(mbus_t *m, uint8_t addr, const void *data,
+dummy_send(mbus_t *m, const void *data,
            size_t len, const struct timespec *deadline)
 {
   return 0;
+}
+
+
+typedef struct mbus_ping {
+  mbus_flow_t mp_flow;
+  int mp_got_reply;
+  pthread_cond_t mp_cond;
+} mbus_ping_t;
+
+
+
+static void
+mbus_pong(mbus_t *m, mbus_flow_t *mf,
+          const uint8_t *pkt, size_t len)
+{
+  mbus_ping_t *mp = (mbus_ping_t *)mf;
+  mp->mp_got_reply = 1;
+  pthread_cond_signal(&mp->mp_cond);
+}
+
+
+
+static mbus_error_t
+mbus_ping_one(mbus_t *m, uint8_t remote_addr)
+{
+  mbus_ping_t mp = {};
+
+  mp.mp_flow.mf_remote_addr = remote_addr;
+  mp.mp_flow.mf_input = mbus_pong;
+
+  pthread_condattr_t attr;
+  pthread_condattr_init(&attr);
+#ifdef __linux__
+  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+#endif
+  pthread_cond_init(&mp.mp_cond, &attr);
+  pthread_condattr_destroy(&attr);
+
+  mbus_flow_create(m, &mp.mp_flow);
+
+  uint8_t pkt[4];
+  mbus_flow_write_header(pkt, m, &mp.mp_flow, 1);
+  pkt[3] = 0; // MBUS_PING;
+
+  struct timespec deadline = mbus_deadline_from_timeout(1000);
+  m->m_send(m, pkt, sizeof(pkt), &deadline);
+
+  struct timespec ts = mbus_deadline_from_timeout(500);
+
+  mbus_error_t err = 0;
+
+  while(!mp.mp_got_reply) {
+    if(pthread_cond_timedwait(&mp.mp_cond, &m->m_mutex, &ts) == ETIMEDOUT) {
+      err = MBUS_ERR_TIMEOUT;
+      break;
+    }
+  }
+  mbus_flow_remove(&mp.mp_flow);
+  return err;
+}
+
+
+mbus_error_t
+mbus_ping(mbus_t *m, uint8_t remote_addr)
+{
+  pthread_mutex_lock(&m->m_mutex);
+  mbus_error_t err = mbus_ping_one(m, remote_addr);
+  pthread_mutex_unlock(&m->m_mutex);
+  return err;
 }
 
 
@@ -1014,13 +832,47 @@ mbus_create_dummy(void)
 }
 
 
-uint16_t
-mbus_get_active_hosts(mbus_t *m)
+mbus_flow_t *
+mbus_flow_find(mbus_t *m, uint8_t remote_addr, uint16_t flow)
 {
-  uint16_t r = 0;
-  for(int i = 0; i < sizeof(m->host_active); i++) {
-    if(m->host_active[i])
-      r |= (1 << i);
+  mbus_flow_t *mf;
+  LIST_FOREACH(mf, &m->m_flows, mf_link) {
+    if(mf->mf_remote_addr == remote_addr && mf->mf_flow == flow)
+      return mf;
   }
-  return r;
+  return NULL;
+}
+
+void
+mbus_flow_create(mbus_t *m, mbus_flow_t *mf)
+{
+  for(int i = 0; i < 1024; i++) {
+    const uint16_t flow_id = rand() & 0x3ff;
+
+    if(mbus_flow_find(m, mf->mf_remote_addr, flow_id) == NULL) {
+      // Available
+      mf->mf_flow = flow_id;
+      LIST_INSERT_HEAD(&m->m_flows, mf, mf_link);
+      return;
+    }
+  }
+  fprintf(stderr, "No flow-id available\n");
+  abort();
+}
+
+
+void
+mbus_flow_remove(mbus_flow_t *mf)
+{
+  LIST_REMOVE(mf, mf_link);
+}
+
+
+void
+mbus_flow_write_header(uint8_t pkt[3],
+                       const mbus_t *m, const mbus_flow_t *mf, int init)
+{
+  pkt[0] = mf->mf_remote_addr;
+  pkt[1] = (init ? 0x80 : 0) | ((mf->mf_flow >> 3) & 0x60) | m->m_our_addr;
+  pkt[2] = mf->mf_flow;
 }

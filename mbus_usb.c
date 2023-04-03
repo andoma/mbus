@@ -32,27 +32,30 @@ typedef struct {
 
 static int
 mbus_xmit(libusb_device_handle *h, int endpoint, const uint8_t* data,
-          size_t len, uint8_t dst_addr, uint8_t src_addr)
+          size_t len, mbus_t *m)
 {
-  uint8_t payload[1 + len + 4];
-  payload[0] = (src_addr << 4) | dst_addr;
-  memcpy(payload + 1, data, len);
+  uint8_t payload[len + 4];
+  memcpy(payload, data, len);
 
-  uint32_t crc = ~mbus_crc32(0, payload, 1 + len);
-  memcpy(payload + 1 + len, &crc, 4);
+  uint32_t crc = ~mbus_crc32(0, payload, len);
+  memcpy(payload + len, &crc, 4);
 
   int actual_length;
-  return libusb_bulk_transfer(h, endpoint, payload, 1 + len + 4,
+
+  mbus_pkt_trace(m, "TX", payload, len + 4);
+
+  return libusb_bulk_transfer(h, endpoint, payload, len + 4,
                               &actual_length, 5000);
 }
 
 
 static mbus_error_t
-mbus_usb_send(mbus_t *m, uint8_t addr, const void *data,
+mbus_usb_send(mbus_t *m, const void *data,
               size_t len, const struct timespec* deadline)
 {
   mbus_usb_t *mu = (mbus_usb_t *)m;
   struct libusb_device_handle *dh;
+
 
   while ((dh = mu->mu_handle) == NULL) {
     if(deadline == NULL ||
@@ -61,7 +64,8 @@ mbus_usb_send(mbus_t *m, uint8_t addr, const void *data,
       return MBUS_ERR_NO_DEVICE;
     }
   }
-  if(mbus_xmit(mu->mu_handle, mu->mu_OUT_endpoint, data, len, addr, m->m_our_addr)) {
+
+  if(mbus_xmit(mu->mu_handle, mu->mu_OUT_endpoint, data, len, m)) {
     return MBUS_ERR_TX;
   }
 
@@ -190,7 +194,7 @@ mbus_thread(void *arg)
         mu->mu_status_cb(mu->mu_aux, MBUS_CONNECTED);
 
       while (1) {
-        uint8_t pkt[32];
+        uint8_t pkt[64];
         int actual_length = 0;
 
         int r = libusb_bulk_transfer(dh, mu->mu_IN_endpoint, pkt, sizeof(pkt),
@@ -202,6 +206,7 @@ mbus_thread(void *arg)
                    libusb_error_name(r));
           break;
         }
+
         pthread_mutex_lock(&mu->m.m_mutex);
         mbus_rx_handle_pkt(&mu->m, pkt, actual_length, 1);
         pthread_mutex_unlock(&mu->m.m_mutex);
@@ -209,7 +214,6 @@ mbus_thread(void *arg)
 
       pthread_mutex_lock(&mu->m.m_mutex);
       mu->mu_handle = NULL;
-      mbus_cancel_rpc(&mu->m);
       pthread_mutex_unlock(&mu->m.m_mutex);
 
       if(mu->mu_status_cb != NULL)

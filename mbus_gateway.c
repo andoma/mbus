@@ -9,138 +9,170 @@
 #include "mbus_i.h"
 
 
+#define FLOW_EXPIRE 3000000 // µs
+
 LIST_HEAD(peer_list, peer);
-LIST_HEAD(xlate_state_list, xlate_state);
 
-typedef struct xlate_state {
-  struct peer *xs_peer;
-  LIST_ENTRY(xlate_state) xs_peer_link;
+LIST_HEAD(mbus_gateway_flow_list, mbus_gateway_flow);
 
-  LIST_ENTRY(xlate_state) xs_gateway_link;
 
-  int64_t xs_deadline;
-  uint8_t xs_bus_id;
-  uint8_t xs_peer_id;
+typedef struct mbus_gateway_flow {
+  mbus_flow_t mgf_flow;
 
-  uint8_t xs_addr;
+  uint16_t mgf_peer_flow;
+  uint8_t mgf_peer_addr;
+  struct peer *mgf_peer;
 
-} xlate_state_t;
+  LIST_ENTRY(mbus_gateway_flow) mgf_peer_link;
 
+  mbus_timer_t mgf_timer;
+
+} mbus_gateway_flow_t;
 
 
 typedef struct mbus_gateway {
   struct peer_list g_peers;
   mbus_t *g_mbus;
-
-  struct xlate_state_list g_rpc_states;
-  struct xlate_state_list g_pcs_states;
-
   int g_port;
-
 } gateway_t;
-
 
 
 typedef struct peer {
   LIST_ENTRY(peer) p_link;
   int p_fd;
   gateway_t *p_gw;
-  struct xlate_state_list p_rpc_states;
-  struct xlate_state_list p_pcs_states;
-
+  struct mbus_gateway_flow_list p_flows;
 } peer_t;
 
 
 static void
-xlate_state_destroy(xlate_state_t *xs)
+send_to_peer(peer_t *p, const uint8_t *pkt, size_t len)
 {
-  LIST_REMOVE(xs, xs_gateway_link);
-  LIST_REMOVE(xs, xs_peer_link);
-  free(xs);
+  uint8_t out[len + 1];
+  out[0] = len;
+  memcpy(out + 1, pkt, len);
+  if(write(p->p_fd, out, len + 1) != len + 1) {}
 }
 
+mbus_gateway_flow_t *
+peer_find_flow(peer_t *p, uint8_t peer_addr,
+               uint8_t remote_addr, uint16_t flow_id)
+{
+  mbus_gateway_flow_t *mgf;
+  LIST_FOREACH(mgf, &p->p_flows, mgf_peer_link) {
+    if(remote_addr == mgf->mgf_flow.mf_remote_addr &&
+       peer_addr == mgf->mgf_peer_addr &&
+       flow_id == mgf->mgf_peer_flow)
+      return mgf;
+  }
+  return NULL;
+}
+
+
+static void
+mgf_destroy(mbus_t *m, mbus_gateway_flow_t *mgf)
+{
+  mbus_log(m, "GW: Destroyed flow bus:%d/%d peer:%d/%d",
+           mgf->mgf_flow.mf_remote_addr,
+           mgf->mgf_flow.mf_flow,
+           mgf->mgf_peer_addr,
+           mgf->mgf_peer_flow);
+
+  mbus_flow_remove(&mgf->mgf_flow);
+  mbus_timer_disarm(&mgf->mgf_timer);
+  LIST_REMOVE(mgf, mgf_peer_link);
+
+  free(mgf);
+}
+
+
+static void
+gateway_flow_input(struct mbus *m, struct mbus_flow *mf,
+                   const uint8_t *pkt, size_t len)
+{
+  mbus_gateway_flow_t *mgf = (mbus_gateway_flow_t *)mf;
+  uint8_t dup[3 + len];
+  memcpy(dup + 3, pkt, len);
+
+  const uint16_t flow = mgf->mgf_peer_flow;
+  dup[0] = mgf->mgf_peer_addr;
+  dup[1] = ((flow >> 3) & 0x60) | mgf->mgf_flow.mf_remote_addr;
+  dup[2] = flow;
+
+  send_to_peer(mgf->mgf_peer, dup, 3 + len);
+
+  mbus_timer_arm(m, &mgf->mgf_timer, mbus_get_ts() + FLOW_EXPIRE);
+}
+
+
+
+
+static void
+gateway_flow_timeout(mbus_t *m, void *opaque, int64_t expire)
+{
+  mbus_gateway_flow_t *mgf = opaque;
+  mgf_destroy(m, mgf);
+}
 
 
 static void
 peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
 {
-  gateway_t *g = p->p_gw;
-  mbus_t *m = g->g_mbus;
-
-  xlate_state_t *xs;
-
   if(len < 2)
     return;
 
-  uint8_t bus_addr = pkt[0] & 0xf;
+  gateway_t *g = p->p_gw;
+  mbus_t *m = g->g_mbus;
 
-  if(pkt[1] & 0x80) {
-    // PCS
-    const uint8_t flowid = pkt[3];
-    if(pkt[2] & 1) {
-      // SYN -> Create state
-
-      LIST_FOREACH(xs, &g->g_pcs_states, xs_gateway_link) {
-        if(xs->xs_addr == bus_addr && xs->xs_bus_id == flowid) {
-          // Flow already exist, drop
-          return;
-        }
-      }
-      xs = calloc(1, sizeof(xlate_state_t));
-      printf("* GW: New PCS state target:%d flow:%x\n", bus_addr, flowid);
-      xs->xs_peer = p;
-      xs->xs_addr = bus_addr;
-      xs->xs_bus_id = flowid;
-      xs->xs_deadline = mbus_get_ts() + 5000000;
-      LIST_INSERT_HEAD(&p->p_pcs_states, xs, xs_peer_link);
-      LIST_INSERT_HEAD(&g->g_pcs_states, xs, xs_gateway_link);
-
-      m->m_send(m, xs->xs_addr, pkt + 1, len - 1, NULL);
-      return;
-    } else {
-
-      LIST_FOREACH(xs, &p->p_pcs_states, xs_peer_link) {
-        if(xs->xs_addr == bus_addr && xs->xs_bus_id == flowid) {
-          xs->xs_deadline = mbus_get_ts() + 5000000;
-          m->m_send(m, xs->xs_addr, pkt + 1, len - 1, NULL);
-          return;
-        }
-      }
-    }
+  uint32_t dst_addr = pkt[0];
+  if(dst_addr >= 32) {
+    // Multicast
+    m->m_send(m, pkt, len, NULL);
     return;
   }
 
-  uint8_t opcode = pkt[1] & 0x0f;
+  if(len < 3)
+    return;
 
-  if(opcode == MBUS_OP_RPC_RESOLVE ||
-     opcode == MBUS_OP_RPC_INVOKE) {
-    // rewrite txid
+  const uint16_t flow = pkt[2] | ((pkt[1] << 3) & 0x300);
+  const uint8_t src_addr = pkt[1] & 0x1f;
+  const int init = pkt[1] & 0x80;
 
-    if(len < 3)
+  mbus_gateway_flow_t *mgf = peer_find_flow(p, src_addr, dst_addr, flow);
+
+  if(init) {
+    if(mgf != NULL)
+      mgf_destroy(m, mgf);
+
+    mgf = calloc(1, sizeof(mbus_gateway_flow_t));
+    mgf->mgf_flow.mf_remote_addr = dst_addr;
+    mgf->mgf_flow.mf_input = gateway_flow_input;
+    mgf->mgf_peer_flow = flow;
+    mgf->mgf_peer_addr = src_addr;
+    mgf->mgf_peer = p;
+    LIST_INSERT_HEAD(&p->p_flows, mgf, mgf_peer_link);
+    mbus_flow_create(m, &mgf->mgf_flow);
+
+    mgf->mgf_timer.mt_opaque = mgf;
+    mgf->mgf_timer.mt_cb = gateway_flow_timeout;
+
+    mbus_log(m, "GW: Created flow bus:%d/%d peer:%d/%d",
+             mgf->mgf_flow.mf_remote_addr,
+             mgf->mgf_flow.mf_flow,
+             mgf->mgf_peer_addr,
+             mgf->mgf_peer_flow);
+
+  } else {
+    if(mgf == NULL)
       return;
-
-    uint8_t rewrite[len];
-    xs = calloc(1, sizeof(xlate_state_t));
-
-    xs->xs_peer = p;
-    xs->xs_addr = bus_addr;
-
-    LIST_INSERT_HEAD(&p->p_rpc_states, xs, xs_peer_link);
-    LIST_INSERT_HEAD(&g->g_rpc_states, xs, xs_gateway_link);
-
-    xs->xs_deadline = mbus_get_ts() + 5000000;
-
-    xs->xs_bus_id = ++m->m_txid_gen[xs->xs_addr & 0xf];
-    xs->xs_peer_id = pkt[2];
-    memcpy(rewrite, pkt, len);
-    rewrite[2] = xs->xs_bus_id;
-    m->m_send(m, xs->xs_addr, rewrite + 1, len - 1, NULL);
-  } else if(opcode == MBUS_OP_DSIG_EMIT) {
-    m->m_send(m, bus_addr, pkt + 1, len - 1, NULL);
-  } else if(opcode == MBUS_OP_OTA_XFER) {
-    m->m_send(m, bus_addr, pkt + 1, len - 1, NULL);
   }
 
+  mbus_timer_arm(m, &mgf->mgf_timer, mbus_get_ts() + FLOW_EXPIRE);
+
+  uint8_t dup[len];
+  memcpy(dup, pkt, len);
+  mbus_flow_write_header(dup, m, &mgf->mgf_flow, init);
+  m->m_send(m, dup, len, NULL);
 }
 
 
@@ -157,63 +189,28 @@ peer_thread(void *arg)
   while(1) {
     if(read(p->p_fd, &plen, 1) != 1)
       break;
-
     if(read(p->p_fd, pkt, plen) != plen)
       break;
-
     pthread_mutex_lock(&m->m_mutex);
     peer_process_packet(p, pkt, plen);
     pthread_mutex_unlock(&m->m_mutex);
   }
 
-  printf("* GW: Peer disconnected\n");
 
   pthread_mutex_lock(&m->m_mutex);
 
-  xlate_state_t *xs;
+  mbus_gateway_flow_t *mgf;
 
-  while((xs = LIST_FIRST(&p->p_rpc_states)) != NULL) {
-    xlate_state_destroy(xs);
+  while((mgf = LIST_FIRST(&p->p_flows)) != NULL) {
+    mgf_destroy(m, mgf);
   }
 
-  while((xs = LIST_FIRST(&p->p_pcs_states)) != NULL) {
-    xlate_state_destroy(xs);
-  }
+  mbus_log(m, "GW: Peer disconnected");
 
   LIST_REMOVE(p, p_link);
   pthread_mutex_unlock(&m->m_mutex);
   close(p->p_fd);
   free(p);
-  return NULL;
-}
-
-
-static void
-expire_list(struct xlate_state_list *xsl, int64_t now)
-{
-  xlate_state_t *xs, *xs_n;
-
-  for(xs = LIST_FIRST(xsl); xs != NULL; xs = xs_n) {
-    xs_n = LIST_NEXT(xs, xs_gateway_link);
-    if(now > xs->xs_deadline) {
-      xlate_state_destroy(xs);
-    }
-  }
-}
-
-
-static void *
-janitor(void *arg)
-{
-  gateway_t *g = arg;
-
-  while(1) {
-    sleep(1);
-    int64_t now = mbus_get_ts();
-    expire_list(&g->g_rpc_states, now);
-    expire_list(&g->g_pcs_states, now);
-  }
-
   return NULL;
 }
 
@@ -243,7 +240,6 @@ mbus_gateway0(gateway_t *g)
   pthread_attr_init(&attr);
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-  pthread_create(&tid, &attr, janitor, g);
 
   while(1) {
     struct sockaddr_in remote;
@@ -255,7 +251,7 @@ mbus_gateway0(gateway_t *g)
     }
     peer_t *p = calloc(1, sizeof(peer_t));
 
-    printf("* GW: New peer connected\n");
+    mbus_log(m, "* GW: New peer connected");
 
     p->p_fd = pfd;
     p->p_gw = g;
@@ -295,71 +291,13 @@ mbus_gateway(mbus_t *m, int local_port, int background)
 }
 
 
-
-static void
-send_to_peer(peer_t *p, const uint8_t *pkt, size_t len)
+void
+mbus_gateway_recv_multicast(struct mbus *m, const uint8_t *pkt, size_t len)
 {
-  uint8_t out[len + 1];
-  out[0] = len;
-  memcpy(out + 1, pkt, len);
-  if(write(p->p_fd, out, len + 1) != len + 1) {}
-}
-
-
-
-int
-mbus_gateway_intercept(mbus_t *m, const uint8_t *pkt, size_t len)
-{
-  xlate_state_t *xs;
   gateway_t *g = m->m_gateway;
 
-  if(len < 3)
-    return 0;
-
-  const uint8_t src_addr = (pkt[0] >> 4) & 0x0f;
-
-
-  if(pkt[1] & 0x80) {
-    // PCS
-    const uint8_t flowid = pkt[3];
-
-    LIST_FOREACH(xs, &g->g_pcs_states, xs_gateway_link) {
-      if(xs->xs_addr == src_addr && xs->xs_bus_id == flowid) {
-        send_to_peer(xs->xs_peer, pkt, len);
-        return 1;
-      }
-    }
-    return 0;
+  peer_t *p;
+  LIST_FOREACH(p, &g->g_peers, p_link) {
+    send_to_peer(p, pkt, len);
   }
-
-  const uint8_t opcode = pkt[1] & 0x0f;
-  if(opcode == MBUS_OP_DSIG_EMIT ||
-     opcode == MBUS_OP_OTA_XFER) {
-    peer_t *p;
-    LIST_FOREACH(p, &g->g_peers, p_link) {
-      send_to_peer(p, pkt, len);
-    }
-    return 0;
-  }
-
-  if(opcode == MBUS_OP_RPC_RESOLVE_REPLY ||
-     opcode == MBUS_OP_RPC_REPLY ||
-     opcode == MBUS_OP_RPC_ERR) {
-
-    LIST_FOREACH(xs, &g->g_rpc_states, xs_gateway_link) {
-      if(xs->xs_bus_id == pkt[2] && src_addr == xs->xs_addr) {
-        peer_t *p = xs->xs_peer;
-        uint8_t out[len + 1];
-        memcpy(out + 1, pkt, len);
-        out[3] = xs->xs_peer_id;
-        out[0] = len;
-
-        xlate_state_destroy(xs);
-
-        if(write(p->p_fd, out, len + 1) != len + 1) {}
-        return 1;
-      }
-    }
-  }
-  return 0;
 }

@@ -18,18 +18,18 @@ typedef struct mbus_tcp {
 } mbus_tcp_t;
 
 static mbus_error_t
-mbus_tcp_send(mbus_t *m, uint8_t addr, const void *data,
+mbus_tcp_send(mbus_t *m, const void *data,
               size_t len, const struct timespec *deadline)
 {
   mbus_tcp_t *mt = (mbus_tcp_t *)m;
+  int plen = 1 + len;
+  uint8_t pkt[plen];
 
-  uint8_t pkt[len + 2];
+  pkt[0] = len;
+  memcpy(pkt + 1, data, len);
 
-  pkt[0] = len + 1;
-  pkt[1] = (mt->m.m_our_addr << 4) | addr;
-  memcpy(pkt + 2, data, len);
   mbus_error_t err = 0;
-  if(write(mt->mt_fd, pkt, len + 2) != len + 2) {
+  if(write(mt->mt_fd, pkt, plen) != plen) {
     err = MBUS_ERR_TX;
   }
   return err;
@@ -64,9 +64,6 @@ mbus_t *
 mbus_create_tcp(const char *host, int port, uint8_t local_addr,
                 mbus_log_cb_t *log_cb, void *aux)
 {
-  fprintf(stderr, "* Gateway connecting to %s:%d\n",
-          host, port);
-
   struct sockaddr_in remoteaddr = {
     .sin_family = AF_INET,
     .sin_port = htons(port),

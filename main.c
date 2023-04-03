@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "mbus.h"
 #include "mbus_gateway.h"
@@ -12,7 +13,7 @@ main(int argc, char **argv)
 {
   int opt;
   const char *connect_to = NULL;
-  int local_addr = 15;
+  int local_addr = 31;
   int target_addr = 1;
   int debug_level = 0;
   srand(time(NULL) & getpid());
@@ -57,7 +58,8 @@ main(int argc, char **argv)
 
   mbus_error_t err;
   if(!strcmp(argv[0], "ping")) {
-    err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 1000);
+    //    err = mbus_invoke(m, target_addr, "ping", NULL, 0, NULL, 0, 1000);
+    err = mbus_ping(m, target_addr);
   } else if(!strcmp(argv[0], "ping-f")) {
     time_t t0 = time(NULL);
     int pps = 0;
@@ -76,8 +78,8 @@ main(int argc, char **argv)
       }
     }
   } else if(!strcmp(argv[0], "ota")) {
-    err = mbus_ota_elf(m, target_addr, argv[1],
-                       argc > 2 && !strcmp(argv[2], "force"));
+    err = mbus_ota(m, target_addr, argv[1],
+                   argc > 2 && !strcmp(argv[2], "force"));
   } else if(!strcmp(argv[0], "buildid")) {
     uint8_t build_id[20];
     size_t build_id_size = sizeof(build_id);
@@ -93,18 +95,26 @@ main(int argc, char **argv)
 
   } else if(!strcmp(argv[0], "shell")) {
 
-    err = mbus_remote_shell(m, target_addr);
+    err = mbus_remote_shell(m, target_addr, "shell");
+
+  } else if(!strcmp(argv[0], "echo")) {
+
+    err = mbus_remote_shell(m, target_addr, "echo");
+
+  } else if(!strcmp(argv[0], "chargen")) {
+
+    err = mbus_remote_shell(m, target_addr, "chargen");
 
   } else if(!strcmp(argv[0], "log")) {
 
     err = mbus_remote_log(m, target_addr);
-
   } else if(!strcmp(argv[0], "gateway")) {
     if(argc < 2) {
       fprintf(stderr, "Missing argument: port\n");
       return 1;
     }
     err = mbus_gateway(m, atoi(argv[1]), 0);
+
   } else {
     fprintf(stderr, "Unknown command %s\n", argv[0]);
     return 1;

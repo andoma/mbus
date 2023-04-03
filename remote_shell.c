@@ -5,14 +5,14 @@
 #include <termios.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "mbus_i.h"
 
 static void *
 send_thread(void *arg)
 {
-  pcs_t *pcs = arg;
-
+  mbus_seqpkt_con_t *msc = arg;
   char buf[128];
 
   while(1) {
@@ -24,23 +24,20 @@ send_thread(void *arg)
     for(int i = 0; i < r; i++) {
       if(buf[i] == 2) {
         fprintf(stderr, "^B\n");
-        pcs_shutdown(pcs);
+        mbus_seqpkt_shutdown(msc);
         return NULL;
       }
     }
-    pcs_send(pcs, buf, r);
-    pcs_flush(pcs);
+    mbus_seqpkt_send(msc, buf, r);
   }
   return NULL;
 }
 
 
 mbus_error_t
-mbus_remote_shell(mbus_t *m, uint8_t target_addr)
+mbus_remote_shell(mbus_t *m, uint8_t target_addr, const char *service)
 {
   struct termios termio2, termio;
-
-  pcs_iface_t *pi = mbus_get_pcs_iface(m);
   if(!isatty(0)) {
     fprintf(stderr, "stdin is not a tty\n");
     exit(1);
@@ -48,7 +45,7 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr)
 
   printf("* Exit with ^B\n");
 
-  pcs_t *pcs = pcs_connect(pi, 0x80, mbus_get_ts(), target_addr);
+  mbus_seqpkt_con_t *msc = mbus_seqpkt_connect(m, target_addr, service);
 
   if(tcgetattr(0, &termio) == -1) {
     perror("tcgetattr");
@@ -62,17 +59,21 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr)
   }
 
   pthread_t tid;
-  pthread_create(&tid, NULL, send_thread, pcs);
+  pthread_create(&tid, NULL, send_thread, msc);
 
-  uint8_t buf[512];
   while(1) {
-    int r = pcs_read(pcs, buf, sizeof(buf), 1);
-    if(r <= 0)
+
+    void *data;
+    ssize_t result = mbus_seqpkt_recv(msc, &data);
+
+    if(result <= 0)
       break;
-#if 1
-    if(write(1, buf, r) != r)
+
+    int x = write(1, data, result);
+    free(data);
+    if(x != result)
       break;
-#endif
+
   }
 
   pthread_cancel(tid);
@@ -80,9 +81,12 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr)
 
   tcsetattr(0, TCSANOW, &termio);
 
+  mbus_seqpkt_close(msc, 0);
+
   printf("\n* Disconnected\n");
   return 0;
 }
+
 
 const char level2str[8][7] = {
   "EMERG ",
@@ -95,35 +99,90 @@ const char level2str[8][7] = {
   "DEBUG "
 };
 
+static int64_t
+wallclock(void)
+{
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  return (int64_t)tv.tv_sec * 1000000LL + (tv.tv_nsec / 1000);
+}
+
 
 mbus_error_t
 mbus_remote_log(mbus_t *m, uint8_t target_addr)
 {
-  pcs_iface_t *pi = mbus_get_pcs_iface(m);
-  pcs_t *pcs = pcs_connect(pi, 0x81, mbus_get_ts(), target_addr);
+  uint32_t expected_seq = 0;
 
-  uint8_t buf[512];
   while(1) {
-    int r = pcs_read(pcs, buf, 1, 1);
-    if(r <= 0)
-      break;
+    mbus_seqpkt_con_t *msc = mbus_seqpkt_connect(m, target_addr, "log");
 
-    int len = buf[0];
-    if(len == 0)
-      break;
-    r = pcs_read(pcs, buf + 1, len - 1, len - 1);
-    if(buf[1] & 0x80) {
-      // sequence sync
-      continue;
+    uint32_t current_seq = 0;
+    while(1) {
+      void *data;
+      ssize_t len = mbus_seqpkt_recv(msc, &data);
+      if(len <= 0)
+        break;
+
+      const uint8_t *buf = data;
+      const uint8_t *end = data + len;
+      const uint8_t hdr = *buf++;
+
+      if(hdr & 0x40) {
+        if(buf + 4 > end) {
+          free(data);
+          break;
+        }
+
+        // Discontinuity
+        memcpy(&current_seq, buf, 4);
+        buf += 4;
+      } else {
+        current_seq++;
+      }
+
+      uint8_t tslen = (hdr >> 3) & 0x7;
+      uint64_t tsdelta = 0;
+      for(int i = 0; i < tslen; i++) {
+        if(buf >= end) {
+          free(data);
+          break;
+        }
+        tsdelta |= *buf << (i * 8);
+        buf++;
+      }
+
+      if(buf > end) {
+        free(data);
+        break;
+      }
+      const uint8_t level = hdr & 0x7;
+      const size_t msglen = end - buf;
+
+      if(expected_seq != current_seq) {
+        printf(" *** LOG DISCONTINUITY ***  Got sequence %u, expected %u\n",
+               current_seq, expected_seq);
+      }
+
+      int64_t ts = wallclock() - tsdelta * 1000;
+
+      time_t sec = ts / 1000000LL;
+      uint32_t usec = ts % 1000000LL;
+
+      struct tm tm;
+      localtime_r(&sec, &tm);
+
+      printf("%02d:%02d:%02d.%03d  %s %.*s\n",
+             tm.tm_hour,
+             tm.tm_min,
+             tm.tm_sec,
+             usec / 1000,
+             level2str[level], (int)msglen, (const char *)buf);
+      expected_seq = current_seq + 1;
+      free(data);
     }
-    uint8_t level = buf[1] & 7;
-    uint8_t tslen = (buf[1] >> 3) & 7;
-    len -= 2 + tslen;
-
-    if(len < 1)
-      continue;
-    printf("%s | %.*s\n", level2str[level], len, buf + 2 + tslen);
-    fflush(stdout);
+    mbus_seqpkt_close(msc, 0);
+    printf(" *** LOG DISCONNECT ***\n");
+    sleep(1);
   }
 
   return 0;
