@@ -14,7 +14,7 @@
 
 #define SP_TIME_TIMEOUT  2500000
 #define SP_TIME_KA       300000
-#define SP_TIME_RTX      250000
+#define SP_TIME_RTX      100000
 #define SP_TIME_ACK      20000
 #define SP_TIME_FAST_ACK 1000
 
@@ -89,6 +89,7 @@ typedef struct mbus_seqpkt_con {
   pthread_cond_t msc_tx_cond;
 
   int64_t msc_last_rx;
+  int64_t msc_last_tx;
 
   int32_t msc_next_xmit;
 
@@ -255,9 +256,10 @@ mbus_seqpkt_output(mbus_seqpkt_con_t *msc, int xmit)
 
   msc->msc_local_flags_sent = pkt[3];
 
+  msc->msc_last_tx = now;
+
   mbus_t *m = msc->msc_mbus;
   m->m_send(m, pkt, pktlen, NULL);
-  mbus_timer_arm(m, &msc->msc_ka_timer, now + SP_TIME_KA);
 }
 
 
@@ -514,6 +516,9 @@ mbus_seqpkt_ka_timer(mbus_t *m, void *opaque, int64_t now)
     pthread_cond_signal(&msc->msc_tx_cond);
   } else {
     mbus_timer_arm(m, &msc->msc_ka_timer, now + SP_TIME_KA);
-    mbus_seqpkt_output(opaque, SP_XMIT_KA);
+
+    if(now > msc->msc_last_tx + SP_TIME_KA)
+      mbus_seqpkt_output(opaque, SP_XMIT_KA);
+
   }
 }
