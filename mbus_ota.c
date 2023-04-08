@@ -110,7 +110,7 @@ mbus_ota_elf_perform_s(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
     c->chunks[j].dst_offset = phdr[i].p_paddr;
     c->chunks[j].length = phdr[i].p_filesz;
     src_offset += phdr[i].p_filesz;
-    mbus_log(m, "OTA: Section %zd From 0x%08x to 0x%08x size:0x%08x | %x %x",
+    mbus_log(m, "OTA: Section %zd File:0x%08x Mem:0x%08x Size:0x%08x | %x %x",
              i,
              c->chunks[j].src_offset,
              c->chunks[j].dst_offset,
