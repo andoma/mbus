@@ -32,7 +32,7 @@ class DsigDrive {
 public:
     DsigDrive(mbus_t *m, uint16_t signal, int period_ms)
         : m_mbus(m)
-        , m_driver(mbus_dsig_drive2(m, signal, period_ms))
+        , m_driver(mbus_dsig_drive(m, signal, period_ms))
     {};
 
     void set(const void *data, size_t len) {
