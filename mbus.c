@@ -638,11 +638,11 @@ dsig_drive_cb(mbus_t *m, void *opaque, int64_t expire)
 
 
 mbus_dsig_driver_t *
-mbus_dsig_drive2(mbus_t *m, uint8_t signal, int64_t period)
+mbus_dsig_drive(mbus_t *m, uint16_t signal, int period_ms)
 {
   mbus_dsig_driver_t *mdd = calloc(1, sizeof(mbus_dsig_driver_t));
   mdd->mdd_signal = signal;
-  mdd->mdd_period = period;
+  mdd->mdd_period = period_ms * 1000;
   mdd->mdd_data = NULL;
   mdd->mdd_length = 0;
   mdd->mdd_timer.mt_cb = dsig_drive_cb;
@@ -703,14 +703,14 @@ mbus_dsig_sub(mbus_t *m,
               uint16_t signal,
               void (*cb)(void *opaque, const uint8_t *data, size_t len),
               void *opaque,
-              int64_t ttl)
+              int ttl_ms)
 
 {
   mbus_dsig_sub_t *mds = calloc(1, sizeof(mbus_dsig_sub_t));
   mds->mds_signal = signal;
   mds->mds_cb = cb;
   mds->mds_opaque = opaque;
-  mds->mds_ttl = ttl;
+  mds->mds_ttl = ttl_ms * 1000;
   mds->mds_timer.mt_cb = dsig_sub_cb;
   mds->mds_timer.mt_opaque = mds;
 

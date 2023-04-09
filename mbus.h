@@ -95,14 +95,14 @@ mbus_dsig_sub_t *mbus_dsig_sub(mbus_t *m,
                                void (*cb)(void *opaque, const uint8_t *data,
                                           size_t len),
                                void *opaque,
-                               int64_t ttl);
+                               int ttl_ms);
 
 mbus_error_t  mbus_dsig_emit(mbus_t *m, uint16_t signal, const void *data,
                              size_t len);
 
 typedef struct mbus_dsig_driver mbus_dsig_driver_t;
 
-mbus_dsig_driver_t *mbus_dsig_drive(mbus_t *m, uint8_t signal, uint8_t ttl);
+mbus_dsig_driver_t *mbus_dsig_drive(mbus_t *m, uint16_t signal, int ttl_ms);
 
 void mbus_dsig_set(mbus_t *m,
                    mbus_dsig_driver_t *mdd,

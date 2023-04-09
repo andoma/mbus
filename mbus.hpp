@@ -8,10 +8,10 @@ namespace MBUS {
 class DsigSub {
 
 public:
-  DsigSub(mbus_t *m, uint8_t signal,
+    DsigSub(mbus_t *m, uint16_t signal, int64_t ttl,
           std::function<void(const uint8_t *pkt, size_t len)> fn)
     : m_fn(fn)
-    , m_sub(mbus_dsig_sub(m, signal, &cb,  this))
+    , m_sub(mbus_dsig_sub(m, signal, &cb, this, ttl))
   {
 
   }
@@ -30,9 +30,9 @@ private:
 
 class DsigDrive {
 public:
-    DsigDrive(mbus_t *m, uint8_t signal, uint8_t ttl)
+    DsigDrive(mbus_t *m, uint16_t signal, int period_ms)
         : m_mbus(m)
-        , m_driver(mbus_dsig_drive(m, signal, ttl))
+        , m_driver(mbus_dsig_drive2(m, signal, period_ms))
     {};
 
     void set(const void *data, size_t len) {
