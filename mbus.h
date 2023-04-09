@@ -11,30 +11,6 @@ extern "C" {
 #include <stdint.h>
 #include <sys/time.h>
 
-#define MBUS_OP_PING 0
-#define MBUS_OP_PONG 1
-#define MBUS_OP_PUB_META 2
-#define MBUS_OP_PUB_DATA 3
-
-#define MBUS_OP_DSIG_EMIT  7
-// [u8 signal] [u8 ttl] [data ...]
-
-#define MBUS_OP_RPC_RESOLVE 8
-// [u8 txid] [name ...]
-
-#define MBUS_OP_RPC_RESOLVE_REPLY 9
-// [u8 txid] ([u32 method id] | [])
-
-#define MBUS_OP_RPC_INVOKE 10
-// [u8 txid] [u32 method id] [var in-data]
-
-#define MBUS_OP_RPC_ERR 11
-// [u8 txid] [s32 errcode]
-
-#define MBUS_OP_RPC_REPLY 12
-// [u8 txid] [var out-data]
-
-#define MBUS_OP_OTA_XFER 13
 
 typedef enum {
     MBUS_ERR_OK = 0,
