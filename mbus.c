@@ -46,6 +46,11 @@ mbus_t *
 mbus_create_from_constr(const char *str0, uint8_t local_addr,
                         mbus_log_cb_t *log_cb, void *aux)
 {
+  if(!strncmp(str0, "ble:", 4)) {
+    return mbus_create_ble(str0+4, // Hostname
+                           local_addr, log_cb, aux);
+  }
+
   const size_t slen = strlen(str0) + 1;
   char *str = alloca(slen);
   strcpy(str, str0);

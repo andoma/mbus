@@ -76,6 +76,9 @@ mbus_t *mbus_create_serial(const char *device, int baudrate,
 mbus_t *mbus_create_tcp(const char *host, int port, uint8_t local_addr,
                         mbus_log_cb_t *log_cb, void *aux);
 
+mbus_t *mbus_create_ble(const char *host, uint8_t local_addr,
+                        mbus_log_cb_t *log_cb, void *aux);
+
 
 mbus_t *mbus_create_from_constr(const char *str, uint8_t local_addr,
                                 mbus_log_cb_t *log_cb, void *aux);

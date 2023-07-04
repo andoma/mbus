@@ -6,6 +6,7 @@ SRCS += \
 	mbus_tcp.c \
 	mbus_seqpkt.c \
 	mbus_ota.c \
+	mbus_ble_linux.c \
 	remote_shell.c \
 	main.c
 
