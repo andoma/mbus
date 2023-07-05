@@ -324,7 +324,7 @@ mbus_ota(mbus_t *m, uint8_t target_addr, const char *path,
   }
 
   if(len < 4 + 21) {
-    mbus_log(m, "OTA: Current running info is too sohrt");
+    mbus_log(m, "OTA: Current running info is too short");
     free(data);
     return MBUS_ERR_OPERATION_FAILED;
   }
