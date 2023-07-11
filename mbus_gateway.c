@@ -70,13 +70,14 @@ peer_find_flow(peer_t *p, uint8_t peer_addr,
 
 
 static void
-mgf_destroy(mbus_t *m, mbus_gateway_flow_t *mgf)
+mgf_destroy(mbus_t *m, mbus_gateway_flow_t *mgf, const char *reason)
 {
-  mbus_log(m, "GW: Destroyed flow bus:%d/%d peer:%d/%d",
+  mbus_log(m, "GW: Destroyed flow bus:%d/%d peer:%d/%d %s",
            mgf->mgf_flow.mf_remote_addr,
            mgf->mgf_flow.mf_flow,
            mgf->mgf_peer_addr,
-           mgf->mgf_peer_flow);
+           mgf->mgf_peer_flow,
+           reason);
 
   mbus_flow_remove(&mgf->mgf_flow);
   mbus_timer_disarm(&mgf->mgf_timer);
@@ -111,7 +112,7 @@ static void
 gateway_flow_timeout(mbus_t *m, void *opaque, int64_t expire)
 {
   mbus_gateway_flow_t *mgf = opaque;
-  mgf_destroy(m, mgf);
+  mgf_destroy(m, mgf, "timeout");
 }
 
 
@@ -142,7 +143,7 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
 
   if(init) {
     if(mgf != NULL)
-      mgf_destroy(m, mgf);
+      mgf_destroy(m, mgf, "reinit");
 
     mgf = calloc(1, sizeof(mbus_gateway_flow_t));
     mgf->mgf_flow.mf_remote_addr = dst_addr;
@@ -201,11 +202,11 @@ peer_thread(void *arg)
 
   mbus_gateway_flow_t *mgf;
 
-  while((mgf = LIST_FIRST(&p->p_flows)) != NULL) {
-    mgf_destroy(m, mgf);
-  }
-
   mbus_log(m, "GW: Peer disconnected");
+
+  while((mgf = LIST_FIRST(&p->p_flows)) != NULL) {
+    mgf_destroy(m, mgf, "Peer disconnected");
+  }
 
   LIST_REMOVE(p, p_link);
   pthread_mutex_unlock(&m->m_mutex);
