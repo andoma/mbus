@@ -187,9 +187,9 @@ peer_thread(void *arg)
   uint8_t pkt[256];
 
   while(1) {
-    if(read(p->p_fd, &plen, 1) != 1)
+    if(recv(p->p_fd, &plen, 1, MSG_WAITALL) != 1)
       break;
-    if(read(p->p_fd, pkt, plen) != plen)
+    if(recv(p->p_fd, pkt, plen, MSG_WAITALL) != plen)
       break;
     pthread_mutex_lock(&m->m_mutex);
     peer_process_packet(p, pkt, plen);
