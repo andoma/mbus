@@ -125,6 +125,14 @@ mainloop(void)
 
 #endif
 
+#ifdef __linux__
+static void
+mainloop(void)
+{
+  pause();
+}
+#endif
+
 
 int
 main(int argc, char **argv)
