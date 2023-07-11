@@ -335,7 +335,7 @@ mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
     if(signal < 4096)
       dsig_handle(m, signal, pkt + 2, len - 2);
 
-  } else {
+  } else if(dst_addr == m->m_our_addr) {
 
     if(len < 3)
       return;
