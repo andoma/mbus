@@ -1,3 +1,5 @@
+include mk/$(shell uname -s).mk
+
 SRCS += \
 	mbus.c \
 	mbus_usb.c \
@@ -6,11 +8,10 @@ SRCS += \
 	mbus_tcp.c \
 	mbus_seqpkt.c \
 	mbus_ota.c \
-	mbus_ble_linux.c \
 	remote_shell.c \
 	main.c
 
-CFLAGS += ${shell pkg-config --cflags libusb-1.0 libelf}
+CFLAGS += ${shell pkg-config --cflags libusb-1.0 libelf} -DHAVE_BLE
 LDFLAGS += ${shell pkg-config --libs libusb-1.0 libelf}
 
 #CFLAGS += -fsanitize=address
