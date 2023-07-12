@@ -95,6 +95,15 @@ typedef struct mbus_seqpkt_con {
 
 } mbus_seqpkt_con_t;
 
+static mbus_error_t mbus_seqpkt_send_locked(void *be,
+                                            const void *data, size_t len);
+
+static int mbus_seqpkt_recv_locked(void *be, void **ptr);
+
+static void mbus_seqpkt_shutdown_locked(void *be);
+
+static void mbus_seqpkt_close_locked(void *be, int wait);
+
 static void mbus_seqpkt_rtx_timer(mbus_t *m, void *opaque, int64_t expire);
 
 static void mbus_seqpkt_ack_timer(mbus_t *m, void *opaque, int64_t expire);
@@ -104,7 +113,7 @@ static void mbus_seqpkt_ka_timer(mbus_t *m, void *opaque, int64_t expire);
 static void mbus_seqpkt_input(struct mbus *m, struct mbus_flow *mf,
                               const uint8_t *pkt, size_t len);
 
-mbus_seqpkt_con_t *
+mbus_con_t *
 mbus_seqpkt_connect_locked(mbus_t *m, uint8_t remote_addr, const char *service)
 {
   mbus_seqpkt_con_t *msc = calloc(1, sizeof(mbus_seqpkt_con_t));
@@ -149,17 +158,17 @@ mbus_seqpkt_connect_locked(mbus_t *m, uint8_t remote_addr, const char *service)
   msc->msc_last_rx = mbus_get_ts();
 
   mbus_timer_arm(m, &msc->msc_ka_timer, msc->msc_last_rx + SP_TIME_KA);
-  return msc;
+
+  mbus_con_t *mc = calloc(1, sizeof(mbus_con_t));
+  mc->backend = msc;
+  mc->m = m;
+  mc->send_locked = mbus_seqpkt_send_locked;
+  mc->recv_locked = mbus_seqpkt_recv_locked;
+  mc->shutdown_locked = mbus_seqpkt_shutdown_locked;
+  mc->close_locked = mbus_seqpkt_close_locked;
+  return mc;
 }
 
-mbus_seqpkt_con_t *
-mbus_seqpkt_connect(mbus_t *m, uint8_t remote_addr, const char *service)
-{
-  pthread_mutex_lock(&m->m_mutex);
-  mbus_seqpkt_con_t *msc = mbus_seqpkt_connect_locked(m, remote_addr, service);
-  pthread_mutex_unlock(&m->m_mutex);
-  return msc;
-}
 
 
 static void
@@ -317,9 +326,10 @@ mbus_seqpkt_input(struct mbus *m, struct mbus_flow *mf,
 
 
 
-mbus_error_t
-mbus_seqpkt_send_locked(mbus_seqpkt_con_t *msc, const void *data, size_t len)
+static mbus_error_t
+mbus_seqpkt_send_locked(void *be, const void *data, size_t len)
 {
+  mbus_seqpkt_con_t *msc = be;
   uint8_t flags = SP_FF;
 
   msc->msc_next_xmit = INT32_MAX;
@@ -359,36 +369,15 @@ mbus_seqpkt_send_locked(mbus_seqpkt_con_t *msc, const void *data, size_t len)
   return 0;
 }
 
-
-
-
-mbus_error_t
-mbus_seqpkt_send(mbus_seqpkt_con_t *msc, const void *data, size_t len)
+static void
+mbus_seqpkt_shutdown_locked(void *be)
 {
-  mbus_t *m = msc->msc_mbus;
-  pthread_mutex_lock(&m->m_mutex);
-  mbus_error_t err = mbus_seqpkt_send_locked(msc, data, len);
-  pthread_mutex_unlock(&m->m_mutex);
-  return err;
-}
+  mbus_seqpkt_con_t *msc = be;
 
-
-void
-mbus_seqpkt_shutdown_locked(mbus_seqpkt_con_t *msc)
-{
   msc->msc_local_close = 1;
   pthread_cond_signal(&msc->msc_rx_cond);
   pthread_cond_signal(&msc->msc_tx_cond);
   mbus_seqpkt_output(msc, 0);
-}
-
-void
-mbus_seqpkt_shutdown(mbus_seqpkt_con_t *msc)
-{
-  mbus_t *m = msc->msc_mbus;
-  pthread_mutex_lock(&m->m_mutex);
-  mbus_seqpkt_shutdown_locked(msc);
-  pthread_mutex_unlock(&m->m_mutex);
 }
 
 
@@ -436,9 +425,11 @@ mbus_seqpkt_reassembly(mbus_seqpkt_con_t *msc, void **ptr)
 }
 
 
-int
-mbuf_seqpkt_recv_locked(mbus_seqpkt_con_t *msc, void **ptr, mbus_t *m)
+static int
+mbus_seqpkt_recv_locked(void *be, void **ptr)
 {
+  mbus_seqpkt_con_t *msc = be;
+  mbus_t *m = msc->msc_mbus;
   while(1) {
     if(msc->msc_remote_close || msc->msc_local_close)
       return 0;
@@ -448,17 +439,6 @@ mbuf_seqpkt_recv_locked(mbus_seqpkt_con_t *msc, void **ptr, mbus_t *m)
       return result;
     pthread_cond_wait(&msc->msc_rx_cond, &m->m_mutex);
   }
-}
-
-
-int
-mbus_seqpkt_recv(mbus_seqpkt_con_t *msc, void **ptr)
-{
-  mbus_t *m = msc->msc_mbus;
-  pthread_mutex_lock(&m->m_mutex);
-  int result = mbuf_seqpkt_recv_locked(msc, ptr, m);
-  pthread_mutex_unlock(&m->m_mutex);
-  return result;
 }
 
 
@@ -472,11 +452,11 @@ clearq(struct mbus_seqpkt_queue *msq)
   }
 }
 
-void
-mbus_seqpkt_close(mbus_seqpkt_con_t *msc, int wait)
+static void
+mbus_seqpkt_close_locked(void *be, int wait)
 {
+  mbus_seqpkt_con_t *msc = be;
   mbus_t *m = msc->msc_mbus;
-  pthread_mutex_lock(&m->m_mutex);
 
   if(wait) {
     while(msc->msc_txq_len) {
@@ -488,10 +468,7 @@ mbus_seqpkt_close(mbus_seqpkt_con_t *msc, int wait)
   clearq(&msc->msc_rxq);
   mbus_flow_remove(&msc->msc_flow);
   free(msc);
-
-  pthread_mutex_unlock(&m->m_mutex);
 }
-
 
 static void
 mbus_seqpkt_rtx_timer(mbus_t *m, void *opaque, int64_t now)

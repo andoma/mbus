@@ -89,7 +89,11 @@ mbus_error_t mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
 
 uint8_t mbus_get_local_addr(mbus_t *m);
 
+void mbus_destroy(mbus_t *mbus);
+
 const char *mbus_error_to_string(mbus_error_t err);
+
+// -- DSIG ----------------------------------------------------------
 
 typedef struct mbus_dsig_sub mbus_dsig_sub_t;
 
@@ -113,24 +117,21 @@ void mbus_dsig_set(mbus_t *m,
 
 void mbus_dsig_clear(mbus_t *m, mbus_dsig_driver_t *mdd);
 
+// -- Connections --------------------------------------------------
 
+typedef struct mbus_con mbus_con_t;
 
-typedef struct mbus_seqpkt_con mbus_seqpkt_con_t;
+mbus_con_t *mbus_connect(mbus_t *m, uint8_t remote_addr, const char *service);
 
-mbus_seqpkt_con_t *mbus_seqpkt_connect(mbus_t *m,
-                                       uint8_t remote_addr,
-                                       const char *service);
+mbus_error_t mbus_send(mbus_con_t *c, const void *data, size_t len);
 
-mbus_error_t mbus_seqpkt_send(mbus_seqpkt_con_t *msc, const void *data,
-                              size_t len);
+int mbus_recv(mbus_con_t *c, void **ptr);
 
-int mbus_seqpkt_recv(mbus_seqpkt_con_t *msc, void **ptr);
+void mbus_shutdown(mbus_con_t *c);
 
-void mbus_seqpkt_shutdown(mbus_seqpkt_con_t *msc);
+void mbus_close(mbus_con_t *c, int wait);
 
-void mbus_seqpkt_close(mbus_seqpkt_con_t *msc, int wait);
-
-void mbus_destroy(mbus_t *mbus);
+// -- Misc support --------------------------------------------
 
 uint32_t mbus_get_active_hosts(mbus_t *m);
 

@@ -277,6 +277,9 @@ mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
   m->m_log_cb = log_cb ?: def_log_cb;
   m->m_aux = log_cb ? aux : m;
 
+  if(m->m_connect_locked == NULL)
+    m->m_connect_locked = mbus_seqpkt_connect_locked;
+
   m->m_connection_id_gen = rand();
 
   pthread_mutex_init(&m->m_mutex, NULL);
@@ -367,7 +370,7 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
                    const struct timespec* deadline)
 {
 
-  mbus_seqpkt_con_t *c;
+  mbus_con_t *c;
 
   const size_t namelen = strlen(name);
   const size_t hdrlen = (1 + namelen + 3) & ~3;
@@ -375,7 +378,7 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
   for(int i = 0; i < 2; i++) {
     c = m->m_rpc_channels[addr];
     if(c == NULL) {
-      c = mbus_seqpkt_connect_locked(m, addr, "rpc");
+      c = m->m_connect_locked(m, addr, "rpc");
     } else {
       m->m_rpc_channels[addr] = NULL;
     }
@@ -385,12 +388,12 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
     memcpy(opkt + 1, name, namelen);
     memcpy(opkt + hdrlen, req, req_size);
 
-    mbus_seqpkt_send_locked(c, opkt, hdrlen + req_size);
+    c->send_locked(c->backend, opkt, hdrlen + req_size);
 
     void *ipkt;
-    int res = mbuf_seqpkt_recv_locked(c, &ipkt, m);
+    int res = c->recv_locked(c->backend, &ipkt);
     if(res < 4) {
-      mbus_seqpkt_shutdown_locked(c);
+      c->shutdown_locked(c->backend);
       continue;
     }
 
@@ -407,7 +410,7 @@ mbus_invoke_locked(mbus_t *m, uint8_t addr,
     if(m->m_rpc_channels[addr] == NULL) {
       m->m_rpc_channels[addr] = c;
     } else {
-      mbus_seqpkt_shutdown_locked(c);
+      c->shutdown_locked(c->backend);
     }
 
     return err;
@@ -881,4 +884,55 @@ mbus_flow_write_header(uint8_t pkt[3],
   pkt[0] = mf->mf_remote_addr;
   pkt[1] = (init ? 0x80 : 0) | ((mf->mf_flow >> 3) & 0x60) | m->m_our_addr;
   pkt[2] = mf->mf_flow;
+}
+
+
+
+mbus_con_t *
+mbus_connect(mbus_t *m, uint8_t remote_addr, const char *service)
+{
+  pthread_mutex_lock(&m->m_mutex);
+  mbus_con_t *mc = m->m_connect_locked(m, remote_addr, service);
+  pthread_mutex_unlock(&m->m_mutex);
+  return mc;
+}
+
+mbus_error_t
+mbus_send(mbus_con_t *c, const void *data, size_t len)
+{
+  mbus_t *m = c->m;
+  pthread_mutex_lock(&m->m_mutex);
+  mbus_error_t err = c->send_locked(c->backend, data, len);
+  pthread_mutex_unlock(&m->m_mutex);
+  return err;
+
+}
+
+int
+mbus_recv(mbus_con_t *c, void **ptr)
+{
+  mbus_t *m = c->m;
+  pthread_mutex_lock(&m->m_mutex);
+  int r = c->recv_locked(c->backend, ptr);
+  pthread_mutex_unlock(&m->m_mutex);
+  return r;
+}
+
+
+void
+mbus_shutdown(mbus_con_t *c)
+{
+  mbus_t *m = c->m;
+  pthread_mutex_lock(&m->m_mutex);
+  c->shutdown_locked(c->backend);
+  pthread_mutex_unlock(&m->m_mutex);
+}
+
+void
+mbus_close(mbus_con_t *c, int wait)
+{
+  mbus_t *m = c->m;
+  pthread_mutex_lock(&m->m_mutex);
+  c->close_locked(c->backend, wait);
+  pthread_mutex_unlock(&m->m_mutex);
 }

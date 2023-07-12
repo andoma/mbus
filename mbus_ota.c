@@ -25,7 +25,7 @@ typedef struct {
 
 
 static mbus_error_t
-mbus_ota_xfer(mbus_t *m, mbus_seqpkt_con_t *msc,
+mbus_ota_xfer(mbus_t *m, mbus_con_t *mc,
               const void *image, size_t image_size,
               int blocksize)
 {
@@ -34,17 +34,17 @@ mbus_ota_xfer(mbus_t *m, mbus_seqpkt_con_t *msc,
 
   uint32_t header[2] = { image_size / blocksize,
     ~mbus_crc32(0, image, image_size)};
-  mbus_seqpkt_send(msc, &header[0], 8);
+  mbus_send(mc, &header[0], 8);
 
   for(size_t i = 0; i < image_size; i += blocksize) {
     printf("Xfer: %zd / %zd\r", i, image_size);
     fflush(stdout);
-    mbus_seqpkt_send(msc, image + i, blocksize);
+    mbus_send(mc, image + i, blocksize);
   }
   printf("Waiting for confirmation\n");
   // Wait for final reply
   void *data;
-  int len = mbus_seqpkt_recv(msc, &data);
+  int len = mbus_recv(mc, &data);
   if(len <= 0)
     return MBUS_ERR_OPERATION_FAILED;
   const uint8_t *info = data;
@@ -64,7 +64,7 @@ mbus_ota_xfer(mbus_t *m, mbus_seqpkt_con_t *msc,
 
 // Transmit sections
 static mbus_error_t
-mbus_ota_elf_perform_s(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
+mbus_ota_elf_perform_s(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
                        int blocksize)
 {
   size_t count = 0;
@@ -129,7 +129,7 @@ mbus_ota_elf_perform_s(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
     return MBUS_ERR_OPERATION_FAILED;
   }
 
-  mbus_error_t err = mbus_ota_xfer(m, msc, image, image_size, blocksize);
+  mbus_error_t err = mbus_ota_xfer(m, mc, image, image_size, blocksize);
   free(image);
   return err;
 }
@@ -139,7 +139,7 @@ mbus_ota_elf_perform_s(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
 
 // Transmit single raw image
 static mbus_error_t
-mbus_ota_elf_perform_r(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
+mbus_ota_elf_perform_r(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
                        int blocksize, int offset)
 {
   size_t count = 0;
@@ -184,7 +184,7 @@ mbus_ota_elf_perform_r(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
   if(fail)
     return MBUS_ERR_OPERATION_FAILED;
 
-  mbus_error_t err = mbus_ota_xfer(m, msc,
+  mbus_error_t err = mbus_ota_xfer(m, mc,
                                    image + offset, image_size - offset,
                                    blocksize);
   free(image);
@@ -198,14 +198,14 @@ mbus_ota_elf_perform_r(mbus_t *m, mbus_seqpkt_con_t *msc, Elf *elf, int fd,
 
 
 static mbus_error_t
-mbus_ota_elf_perform(mbus_t *m, mbus_seqpkt_con_t *msc,
+mbus_ota_elf_perform(mbus_t *m, mbus_con_t *mc,
                      Elf *elf, int fd, char otamode, int blocksize,
                      int offset)
 {
   if(otamode == 's') {
-    return mbus_ota_elf_perform_s(m, msc, elf, fd, blocksize);
+    return mbus_ota_elf_perform_s(m, mc, elf, fd, blocksize);
   } else if(otamode == 'r') {
-    return mbus_ota_elf_perform_r(m, msc, elf, fd, blocksize, offset);
+    return mbus_ota_elf_perform_r(m, mc, elf, fd, blocksize, offset);
   } else {
     return MBUS_ERR_MISMATCH;
   }
@@ -224,7 +224,7 @@ bin2hex(char *out, const uint8_t *src, size_t len)
 }
 
 mbus_error_t
-mbus_ota_prepare(mbus_t *m, mbus_seqpkt_con_t *msc,
+mbus_ota_prepare(mbus_t *m, mbus_con_t *mc,
                  const char *running_appname,
                  const uint8_t *running_build_id,
                  Elf *elf, int force_upgrade, char mode, int fd,
@@ -271,7 +271,7 @@ mbus_ota_prepare(mbus_t *m, mbus_seqpkt_con_t *msc,
 
   if(memcmp(loaded_build_id, running_build_id, 20) || force_upgrade) {
     // Build-id differs, do upgrade
-    err = mbus_ota_elf_perform(m, msc, elf, fd, mode, blocksize, offset);
+    err = mbus_ota_elf_perform(m, mc, elf, fd, mode, blocksize, offset);
   }
 
   return err;
@@ -280,7 +280,7 @@ mbus_ota_prepare(mbus_t *m, mbus_seqpkt_con_t *msc,
 
 
 mbus_error_t
-mbus_ota_open_elf(mbus_t *m, mbus_seqpkt_con_t *msc,
+mbus_ota_open_elf(mbus_t *m, mbus_con_t *mc,
                   const char *path, const char *appname,
                   const uint8_t *buildid, int force, int mode,
                   int blocksize, int offset)
@@ -300,7 +300,7 @@ mbus_ota_open_elf(mbus_t *m, mbus_seqpkt_con_t *msc,
   }
 
 
-  mbus_error_t err = mbus_ota_prepare(m, msc, appname, buildid, elf,
+  mbus_error_t err = mbus_ota_prepare(m, mc, appname, buildid, elf,
                                       force, mode, fd, blocksize,
                                       offset);
 
@@ -315,9 +315,9 @@ mbus_error_t
 mbus_ota(mbus_t *m, uint8_t target_addr, const char *path,
          int force_upgrade)
 {
-  mbus_seqpkt_con_t *msc = mbus_seqpkt_connect(m, target_addr, "ota");
+  mbus_con_t *mc = mbus_connect(m, target_addr, "ota");
   void *data;
-  int len = mbus_seqpkt_recv(msc, &data);
+  int len = mbus_recv(mc, &data);
   if(len <= 0) {
     mbus_log(m, "OTA: Failed to receive current running info");
     return MBUS_ERR_OPERATION_FAILED;
@@ -345,13 +345,13 @@ mbus_ota(mbus_t *m, uint8_t target_addr, const char *path,
   uint8_t blocksize = pkt[2];
   uint32_t offset = pkt[3] * 1024;
 
-  mbus_error_t err = mbus_ota_open_elf(m, msc, path, appname, pkt + 4,
+  mbus_error_t err = mbus_ota_open_elf(m, mc, path, appname, pkt + 4,
                                        force_upgrade, mode, blocksize,
                                        offset);
 
   free(data);
   free(appname);
-  mbus_seqpkt_close(msc, 0);
+  mbus_close(mc, 0);
   return err;
 
 }

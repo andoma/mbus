@@ -65,9 +65,26 @@ typedef struct mbus {
 
   struct mbus_timer_list m_timers;
 
-  struct mbus_seqpkt_con *m_rpc_channels[32];
+  struct mbus_con *m_rpc_channels[32];
+
+  struct mbus_con *(*m_connect_locked)(mbus_t *m, uint8_t remote_addr,
+                                       const char *service);
 
 } mbus_t;
+
+struct mbus_con {
+  void *backend;
+
+  mbus_t *m;
+
+  mbus_error_t (*send_locked)(void *backend, const void *data, size_t len);
+
+  int (*recv_locked)(void *backend, void **ptr);
+
+  void (*shutdown_locked)(void *backend);
+
+  void (*close_locked)(void *backend, int wait);
+};
 
 void mbus_timer_arm(mbus_t *m, mbus_timer_t *t, int64_t expire);
 
@@ -110,13 +127,5 @@ void mbus_flow_write_header(uint8_t pkt[static 3],
                             const mbus_t *m, const mbus_flow_t *mf, int init);
 
 
-mbus_seqpkt_con_t *mbus_seqpkt_connect_locked(mbus_t *m, uint8_t remote_addr,
-                                              const char *service);
-
-mbus_error_t mbus_seqpkt_send_locked(mbus_seqpkt_con_t *msc, const void *data,
-                                     size_t len);
-
-int mbuf_seqpkt_recv_locked(mbus_seqpkt_con_t *msc, void **ptr, mbus_t *m);
-
-void mbus_seqpkt_shutdown_locked(mbus_seqpkt_con_t *msc);
-
+mbus_con_t *mbus_seqpkt_connect_locked(mbus_t *m, uint8_t remote_addr,
+                                       const char *service);

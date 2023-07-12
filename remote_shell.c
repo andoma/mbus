@@ -12,7 +12,7 @@
 static void *
 send_thread(void *arg)
 {
-  mbus_seqpkt_con_t *msc = arg;
+  mbus_con_t *msc = arg;
   char buf[128];
 
   while(1) {
@@ -24,11 +24,11 @@ send_thread(void *arg)
     for(int i = 0; i < r; i++) {
       if(buf[i] == 2) {
         fprintf(stderr, "^B\n");
-        mbus_seqpkt_shutdown(msc);
+        mbus_shutdown(msc);
         return NULL;
       }
     }
-    mbus_seqpkt_send(msc, buf, r);
+    mbus_send(msc, buf, r);
   }
   return NULL;
 }
@@ -45,7 +45,7 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr, const char *service)
 
   printf("* Exit with ^B\n");
 
-  mbus_seqpkt_con_t *msc = mbus_seqpkt_connect(m, target_addr, service);
+  mbus_con_t *msc = mbus_connect(m, target_addr, service);
 
   if(tcgetattr(0, &termio) == -1) {
     perror("tcgetattr");
@@ -64,7 +64,7 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr, const char *service)
   while(1) {
 
     void *data;
-    ssize_t result = mbus_seqpkt_recv(msc, &data);
+    ssize_t result = mbus_recv(msc, &data);
 
     if(result <= 0)
       break;
@@ -81,7 +81,7 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr, const char *service)
 
   tcsetattr(0, TCSANOW, &termio);
 
-  mbus_seqpkt_close(msc, 0);
+  mbus_close(msc, 0);
 
   printf("\n* Disconnected\n");
   return 0;
@@ -114,12 +114,12 @@ mbus_remote_log(mbus_t *m, uint8_t target_addr)
   uint32_t expected_seq = 0;
 
   while(1) {
-    mbus_seqpkt_con_t *msc = mbus_seqpkt_connect(m, target_addr, "log");
+    mbus_con_t *msc = mbus_connect(m, target_addr, "log");
 
     uint32_t current_seq = 0;
     while(1) {
       void *data;
-      ssize_t len = mbus_seqpkt_recv(msc, &data);
+      ssize_t len = mbus_recv(msc, &data);
       if(len <= 0)
         break;
 
@@ -180,7 +180,7 @@ mbus_remote_log(mbus_t *m, uint8_t target_addr)
       expected_seq = current_seq + 1;
       free(data);
     }
-    mbus_seqpkt_close(msc, 0);
+    mbus_close(msc, 0);
     printf(" *** LOG DISCONNECT ***\n");
     sleep(1);
   }
