@@ -144,8 +144,10 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   default:
     printf("stream event %ld\n", eventCode);
     break;
-  case NSStreamEventEndEncountered:
+
   case NSStreamEventErrorOccurred:
+    printf("Stream error\n");
+  case NSStreamEventEndEncountered:
     [self.inputStream close];
     [self.inputStream removeFromRunLoop:[NSRunLoop currentRunLoop]
                                 forMode:NSDefaultRunLoopMode];
@@ -203,7 +205,6 @@ mbus_ble_send(mbus_t *m, const void *data,
   pkt[0] = (len + 4);
   pkt[1] = (len + 4) >> 8;
   [mb->l2cap.outputStream write:pkt maxLength:len + 2 + 4];
-  // TODO: Free mb
   return 0;
 }
 
