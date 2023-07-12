@@ -147,7 +147,7 @@ main(int argc, char **argv)
   while ((opt = getopt(argc, argv, "c:t:l:d:")) != -1) {
     switch(opt) {
     case 'l':
-      local_addr = atoi(argv[1]);
+      local_addr = atoi(optarg);
       break;
     case 'c':
       connect_to = optarg;
