@@ -258,6 +258,7 @@ peer_conn_mode(peer_t *p)
   }
   mbus_shutdown(mc);
   pthread_join(tid, NULL);
+  mbus_close(mc, 1);
 }
 
 static void *
