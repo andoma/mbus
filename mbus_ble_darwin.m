@@ -201,7 +201,7 @@ mbus_ble_send(mbus_t *m, const void *data,
   memcpy(pkt + 2, data, len);
   uint32_t crc = ~mbus_crc32(0, pkt + 2, len);
   memcpy(pkt + 2 + len, &crc, 4);
-  mbus_pkt_trace(m, "TX", pkt + 2, len + 4);
+  mbus_pkt_trace(m, "TX", pkt + 2, len + 4, 2);
   pkt[0] = (len + 4);
   pkt[1] = (len + 4) >> 8;
   [mb->l2cap.outputStream write:pkt maxLength:len + 2 + 4];

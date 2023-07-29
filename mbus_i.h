@@ -110,7 +110,7 @@ mbus_error_t mbus_invoke_locked(mbus_t *m, uint8_t addr,
 struct timespec mbus_deadline_from_timeout(int timeout_ms);
 
 void mbus_pkt_trace(const mbus_t *m, const char *prefix,
-                    const uint8_t *pkt, size_t len);
+                    const uint8_t *pkt, size_t len, int level);
 
 void mbus_gateway_recv_multicast(struct mbus *m, const uint8_t *pkt,
                                  size_t len);

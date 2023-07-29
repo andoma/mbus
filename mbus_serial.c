@@ -197,7 +197,7 @@ encode_packet(const uint8_t *data, size_t len, const mbus_t *m, uint8_t addr)
   uint32_t crc = ~mbus_crc32(0, buf, 1 + len);
   memcpy(buf + 1 + len, &crc, 4);
 
-  mbus_pkt_trace(m, "TX", buf, 1 + len);
+  mbus_pkt_trace(m, "TX", buf, 1 + len, 2);
 
   data = buf;
   len += 1 + 4;

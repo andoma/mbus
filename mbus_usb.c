@@ -42,7 +42,7 @@ mbus_xmit(libusb_device_handle *h, int endpoint, const uint8_t* data,
 
   int actual_length;
 
-  mbus_pkt_trace(m, "TX", payload, len + 4);
+  mbus_pkt_trace(m, "TX", payload, len + 4, 2);
 
   return libusb_bulk_transfer(h, endpoint, payload, len + 4,
                               &actual_length, 5000);

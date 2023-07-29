@@ -31,7 +31,7 @@ mbus_ble_send(mbus_t *m, const void *data,
   uint32_t crc = ~mbus_crc32(0, payload, len);
   memcpy(payload + len, &crc, 4);
 
-  mbus_pkt_trace(m, "TX", payload, len + 4);
+  mbus_pkt_trace(m, "TX", payload, len + 4, 2);
 
   if(write(mb->fd, payload, len + 4) != len + 4) {
     fprintf(stderr, "Warning: write failed -- %s\n", strerror(errno));

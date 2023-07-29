@@ -305,9 +305,9 @@ mbus_destroy(mbus_t *m)
 
 void
 mbus_pkt_trace(const mbus_t *m, const char *prefix,
-               const uint8_t *pkt, size_t len)
+               const uint8_t *pkt, size_t len, int level)
 {
-  if(m->m_debug_level >= 3) {
+  if(m->m_debug_level >= level) {
     mbus_hexdump(m, prefix, pkt, len);
   }
 }
@@ -316,7 +316,7 @@ mbus_pkt_trace(const mbus_t *m, const char *prefix,
 void
 mbus_rx_handle_pkt(mbus_t *m, const uint8_t *pkt, size_t len, int check_crc)
 {
-  mbus_pkt_trace(m, "RX", pkt, len);
+  mbus_pkt_trace(m, "RX", pkt, len, 3);
 
   if(check_crc) {
     if(len < 4 || ~mbus_crc32(0, pkt, len)) {
