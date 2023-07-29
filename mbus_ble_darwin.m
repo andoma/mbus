@@ -3,39 +3,55 @@
 #import <Foundation/Foundation.h>
 #import <CoreBluetooth/CoreBluetooth.h>
 
+TAILQ_HEAD(pkt_queue, pkt);
+
 typedef struct mbus_ble mbus_ble_t;
 
-@interface L2CAPClient : NSObject<CBCentralManagerDelegate, CBPeripheralDelegate, NSStreamDelegate>
+@class BleGateway;
+
+@interface Connection : NSObject<NSStreamDelegate>
 {
-  mbus_ble_t *mbus;
   uint8_t rxbuf[256];
   size_t rxlen;
 }
 
--(id)initWithMbus:(mbus_ble_t *)mbus;
+-(id)initWithGateway:(BleGateway *)gw l2cap:(CBL2CAPChannel *)channel;
+
+@property (strong, nonatomic) CBL2CAPChannel *channel;
+@property (strong, nonatomic) BleGateway *gateway;
+@end
+
+
+
+@interface BleGateway : NSObject<CBCentralManagerDelegate, CBPeripheralDelegate>
+{
+}
+
+-(id)initWithMbus:(mbus_ble_t *)m;
+
+@property (assign, nonatomic) mbus_ble_t *mbus;
 @property (strong, nonatomic) CBCentralManager *centralManager;
 @property (strong, nonatomic) CBPeripheral *discoveredPeripheral;
-@property (strong, nonatomic) NSOutputStream* outputStream;
-@property (strong, nonatomic) NSInputStream* inputStream;
-@property (strong, nonatomic) CBL2CAPChannel *l2capChannel;
+@property (strong, nonatomic) NSMutableArray *connections;
+@property (strong, nonatomic) Connection *primary;
 @end
+
+
 
 
 struct mbus_ble {
   mbus_t m;
   char *name;
-  pthread_t tid;
-  L2CAPClient *l2cap;
+  BleGateway *gateway;
 };
 
 
-@implementation L2CAPClient
+@implementation BleGateway
 
-
--(id)initWithMbus:(mbus_ble_t *)mbus_ {
-  self->mbus = mbus_;
+-(id)initWithMbus:(mbus_ble_t *)m {
+  self.mbus = m;
   self.centralManager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
-  rxlen = 0;
+  self.connections = [[NSMutableArray alloc] init];
   return [self init];
 }
 
@@ -74,7 +90,7 @@ struct mbus_ble {
   if(!peripheral.name.UTF8String)
     return;
 
-  if(!strcmp(peripheral.name.UTF8String, mbus->name)) {
+  if(!strcmp(peripheral.name.UTF8String, self.mbus->name)) {
     NSLog(@"Discovered %@ at %@ dBm, adv %@", peripheral.name, RSSI, advertisementData);
 
     if(self.discoveredPeripheral != peripheral) {
@@ -89,7 +105,8 @@ struct mbus_ble {
 didFailToConnectPeripheral:(CBPeripheral *)peripheral
                      error:(NSError *)error
 {
-  NSLog(@"Failed to connect to %@. (%@)", peripheral, [error localizedDescription]);
+  NSLog(@"Failed to connect to %@. (%@)",
+        peripheral, [error localizedDescription]);
 }
 
 - (void)centralManager:(CBCentralManager *)central
@@ -104,7 +121,8 @@ didFailToConnectPeripheral:(CBPeripheral *)peripheral
 - (void)centralManager:(CBCentralManager *)central
 didDisconnectPeripheral:(CBPeripheral *)peripheral
                  error:(NSError *)error {
-  NSLog(@"Device disconnected%@. (%@)", peripheral, [error localizedDescription]);
+  NSLog(@"Device disconnected: %@. (%@)",
+        peripheral, [error localizedDescription]);
 
   self.discoveredPeripheral = nil;
   [self startScan];
@@ -120,26 +138,70 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 
   } else {
     NSLog(@"Connected to peripheral %@", self.discoveredPeripheral);
-    self.l2capChannel = channel;
+    Connection *c = [[Connection alloc] initWithGateway:self l2cap:channel];
+    printf("concreate:%ld\n", CFGetRetainCount(c));
+    [self.connections addObject: c];
 
-    [self.l2capChannel.outputStream open];
-    [self.l2capChannel.inputStream open];
+    if(channel.PSM == 0xc3) {
+      self.primary = c;
+      NSLog(@"Primary connection established");
+    }
+    [c release];
+    printf("concreate:%ld\n", CFGetRetainCount(c));
+  }
+}
 
-    self.inputStream = self.l2capChannel.inputStream;
-    self.outputStream = self.l2capChannel.outputStream;
-    self.inputStream.delegate = self;
+-(void)deleteConnection:(Connection *)c
+{
+  pthread_mutex_lock(&self.mbus->m.m_mutex);
+  if(self.primary == c)
+    self.primary = nil;
 
-    NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
+  [self.connections removeObject:c];
+  pthread_mutex_unlock(&self.mbus->m.m_mutex);
+}
 
-    [self.inputStream scheduleInRunLoop:runLoop
+
+@end
+
+@implementation Connection
+
+-(id)initWithGateway:(BleGateway *)gw l2cap:(CBL2CAPChannel *)c
+{
+  rxlen = 0;
+
+  self.gateway = gw;
+  self.channel = c;
+  [c.inputStream open];
+  [c.outputStream open];
+
+  self.channel.inputStream.delegate = self;
+
+  NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
+
+  [self.channel.inputStream scheduleInRunLoop:runLoop
+                                      forMode:NSDefaultRunLoopMode];
+
+  return [self init];
+}
+
+
+-(void)destroy
+{
+  self.channel.inputStream.delegate = nil;
+  [self.channel.inputStream close];
+  [self.channel.inputStream removeFromRunLoop:[NSRunLoop currentRunLoop]
                                 forMode:NSDefaultRunLoopMode];
 
-  }
+  [self.channel.outputStream close];
+  [self.gateway deleteConnection:self];
 }
 
 
 -(void)stream:(NSStream *)aStream handleEvent:(NSStreamEvent)eventCode
 {
+  mbus_ble_t *mb = self.gateway.mbus;
+
   switch(eventCode) {
   default:
     printf("stream event %ld\n", eventCode);
@@ -147,21 +209,19 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 
   case NSStreamEventErrorOccurred:
     printf("Stream error\n");
+    [self destroy];
+    break;
   case NSStreamEventEndEncountered:
-    [self.inputStream close];
-    [self.inputStream removeFromRunLoop:[NSRunLoop currentRunLoop]
-                                forMode:NSDefaultRunLoopMode];
-    [self.outputStream close];
-
-    self.inputStream = nil;
-    self.outputStream = nil;
-    self.l2capChannel = nil;
-    printf("Stream closed\n");
+    printf("Stream end\n");
+    [self destroy];
     break;
 
   case NSStreamEventHasBytesAvailable:
     while(rxlen < sizeof(rxbuf)) {
-      NSInteger n = [self.inputStream read:rxbuf maxLength:sizeof(rxbuf) - rxlen];
+      if(![self.channel.inputStream hasBytesAvailable])
+        break;
+
+      NSInteger n = [self.channel.inputStream read:rxbuf maxLength:sizeof(rxbuf) - rxlen];
       if(n < 1)
         break;
 
@@ -171,9 +231,9 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
         int tlen = plen + 2;
         if(tlen > rxlen)
           break;
-        pthread_mutex_lock(&mbus->m.m_mutex);
-        mbus_rx_handle_pkt(&mbus->m, rxbuf + 2, plen, 1);
-        pthread_mutex_unlock(&mbus->m.m_mutex);
+        pthread_mutex_lock(&mb->m.m_mutex);
+        mbus_rx_handle_pkt(&mb->m, rxbuf + 2, plen, 1);
+        pthread_mutex_unlock(&mb->m.m_mutex);
 
         memmove(rxbuf, rxbuf + tlen, rxlen - tlen);
         rxlen -= tlen;
@@ -185,26 +245,22 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 
 @end
 
-
 static mbus_error_t
 mbus_ble_send(mbus_t *m, const void *data,
               size_t len, const struct timespec *deadline)
 {
   mbus_ble_t *mb = (mbus_ble_t *)m;
-
-  if(!mb->l2cap.l2capChannel) {
-    printf("Not open\n");
-    return 0;
-  }
-
   uint8_t pkt[2 + len + 4];
+
   memcpy(pkt + 2, data, len);
   uint32_t crc = ~mbus_crc32(0, pkt + 2, len);
   memcpy(pkt + 2 + len, &crc, 4);
   mbus_pkt_trace(m, "TX", pkt + 2, len + 4, 2);
   pkt[0] = (len + 4);
   pkt[1] = (len + 4) >> 8;
-  [mb->l2cap.outputStream write:pkt maxLength:len + 2 + 4];
+
+  Connection *c = mb->gateway.primary;
+  [c.channel.outputStream write:pkt maxLength:2 + len + 4];
   return 0;
 }
 
@@ -212,7 +268,6 @@ mbus_t *
 mbus_create_ble(const char *name, uint8_t local_addr,
                 mbus_log_cb_t *log_cb, void *aux)
 {
-
   mbus_ble_t *mb = calloc(1, sizeof(mbus_ble_t));
 
   mb->name = strdup(name);
@@ -222,6 +277,6 @@ mbus_create_ble(const char *name, uint8_t local_addr,
 
   mbus_init_common(&mb->m, log_cb, aux);
 
-  mb->l2cap = [[L2CAPClient alloc] initWithMbus:mb];
+  mb->gateway = [[BleGateway alloc] initWithMbus:mb];
   return &mb->m;
 }

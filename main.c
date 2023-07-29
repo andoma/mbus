@@ -102,27 +102,44 @@ dispatch_command(void *arg)
 
 
 #ifdef __APPLE__
-
 #include <CoreFoundation/CoreFoundation.h>
 
-static void
-do_nothing(CFRunLoopTimerRef timer, void *info)
+#if 0
+static void myRunLoopCallback(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info)
 {
+  switch (activity) {
+  case kCFRunLoopEntry:
+    printf("%s\n", "kCFRunLoopEntry");
+    break;
+  case kCFRunLoopBeforeTimers:
+    printf("%s\n", "kCFRunLoopBeforeTimers");
+    break;
+  case kCFRunLoopBeforeSources:
+    printf("%s\n", "kCFRunLoopBeforeSources");
+    break;
+  case kCFRunLoopAfterWaiting:
+    printf("%s\n", "kCFRunLoopAfterWaiting");
+    break;
+  case kCFRunLoopExit:
+    printf("%s\n", "kCFRunLoopExit");
+    break;
+  default:
+    break;
+  }
 }
-
-
+#endif
 static void
 mainloop(void)
 {
-  CFRunLoopTimerRef r =
-    CFRunLoopTimerCreate(NULL, CFAbsoluteTimeGetCurrent(),
-                         1000000.0f, 0, 0, do_nothing, NULL);
-  CFRunLoopAddTimer(CFRunLoopGetCurrent(), r, kCFRunLoopCommonModes);
-  while(1) {
-    CFRunLoopRun();
-  }
-}
+#if 0
+  CFRunLoopObserverRef beginObserver = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopAllActivities, true, LONG_MIN, &myRunLoopCallback, NULL);
 
+  CFRunLoopAddObserver(CFRunLoopGetMain(), beginObserver, kCFRunLoopCommonModes);
+#endif
+
+  CFRunLoopRun();
+  exit(2);
+}
 #endif
 
 #ifdef __linux__
