@@ -175,12 +175,14 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   [c.inputStream open];
   [c.outputStream open];
 
-  self.channel.inputStream.delegate = self;
+  c.inputStream.delegate = self;
 
   NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
 
-  [self.channel.inputStream scheduleInRunLoop:runLoop
-                                      forMode:NSDefaultRunLoopMode];
+  [c.inputStream scheduleInRunLoop:runLoop
+                           forMode:NSDefaultRunLoopMode];
+  [c.outputStream scheduleInRunLoop:runLoop
+                            forMode:NSDefaultRunLoopMode];
 
   return [self init];
 }
@@ -191,9 +193,11 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   self.channel.inputStream.delegate = nil;
   [self.channel.inputStream close];
   [self.channel.inputStream removeFromRunLoop:[NSRunLoop currentRunLoop]
-                                forMode:NSDefaultRunLoopMode];
+                                      forMode:NSDefaultRunLoopMode];
 
   [self.channel.outputStream close];
+  [self.channel.outputStream removeFromRunLoop:[NSRunLoop currentRunLoop]
+                                       forMode:NSDefaultRunLoopMode];
   [self.gateway deleteConnection:self];
 }
 
@@ -221,14 +225,16 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
       if(![self.channel.inputStream hasBytesAvailable])
         break;
 
-      NSInteger n = [self.channel.inputStream read:rxbuf maxLength:sizeof(rxbuf) - rxlen];
+      NSInteger n = [self.channel.inputStream read:rxbuf+rxlen maxLength:sizeof(rxbuf) - rxlen];
       if(n < 1)
         break;
-
       rxlen += n;
       while(rxlen >= 2) {
         int plen = rxbuf[0] | (rxbuf[1] << 8);
         int tlen = plen + 2;
+        if(tlen > 80) {
+          abort();
+        }
         if(tlen > rxlen)
           break;
         pthread_mutex_lock(&mb->m.m_mutex);
@@ -236,6 +242,7 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
         pthread_mutex_unlock(&mb->m.m_mutex);
 
         memmove(rxbuf, rxbuf + tlen, rxlen - tlen);
+        assert(rxlen >= tlen);
         rxlen -= tlen;
       }
     }
@@ -250,7 +257,9 @@ mbus_ble_send(mbus_t *m, const void *data,
               size_t len, const struct timespec *deadline)
 {
   mbus_ble_t *mb = (mbus_ble_t *)m;
-  uint8_t pkt[2 + len + 4];
+  size_t pktlen = 2 + len + 4;
+
+  uint8_t *pkt = malloc(pktlen);
 
   memcpy(pkt + 2, data, len);
   uint32_t crc = ~mbus_crc32(0, pkt + 2, len);
@@ -259,8 +268,37 @@ mbus_ble_send(mbus_t *m, const void *data,
   pkt[0] = (len + 4);
   pkt[1] = (len + 4) >> 8;
 
-  Connection *c = mb->gateway.primary;
-  [c.channel.outputStream write:pkt maxLength:2 + len + 4];
+  dispatch_async(dispatch_get_main_queue(), ^{
+      Connection *c = mb->gateway.primary;
+      if(c) {
+        printf("Attempt to transmit\n");
+        int n = [c.channel.outputStream write:pkt maxLength:pktlen];
+        printf("xmit:%d\n", n);
+        if(n != pktlen) {
+          fprintf(stderr, "BLE Short send tried:%zd did:%d\n", pktlen, n);
+          abort();
+        }
+      }
+      free(pkt);
+    });
+#if 0
+  [c retain];
+
+  pthread_mutex_unlock(&m->m_mutex);
+#if 1
+  while(![c.channel.outputStream hasSpaceAvailable]) {
+    usleep(100000);
+    printf("WAT LOL NO SPACE HEH\n");
+  }
+#endif
+  int n = [c.channel.outputStream write:pkt maxLength:pktlen];
+  if(n != pktlen) {
+    fprintf(stderr, "BLE Short send tried:%zd did:%d\n", pktlen, n);
+    abort();
+  }
+  pthread_mutex_lock(&m->m_mutex);
+  [c release];
+#endif
   return 0;
 }
 
@@ -274,6 +312,7 @@ mbus_create_ble(const char *name, uint8_t local_addr,
 
   mb->m.m_our_addr = local_addr;
   mb->m.m_send = mbus_ble_send;
+  mb->m.m_connect_locked = mbus_gdpkt_connect_locked;
 
   mbus_init_common(&mb->m, log_cb, aux);
 
