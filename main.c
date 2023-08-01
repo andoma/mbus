@@ -78,6 +78,10 @@ dispatch_command(void *arg)
 
     err = mbus_remote_shell(m, target_addr, "chargen");
 
+  } else if(!strcmp(argv[0], "discard")) {
+
+    err = mbus_remote_discard(m, target_addr);
+
   } else if(!strcmp(argv[0], "log")) {
 
     err = mbus_remote_log(m, target_addr);

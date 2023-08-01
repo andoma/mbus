@@ -187,3 +187,27 @@ mbus_remote_log(mbus_t *m, uint8_t target_addr)
 
   return 0;
 }
+
+
+
+mbus_error_t
+mbus_remote_discard(mbus_t *m, uint8_t target_addr)
+{
+  mbus_con_t *msc = mbus_connect(m, target_addr, "discard");
+  if(msc == NULL) {
+    fprintf(stderr, "Failed to open\n");
+    return MBUS_ERR_NOT_CONNECTED;
+  }
+
+  uint8_t pkt[48] = {};
+  int cnt = 0;
+  while(1) {
+    pkt[0] = cnt;
+    pkt[1] = cnt >> 8;
+    pkt[2] = cnt >> 16;
+    pkt[3] = cnt >> 24;
+    cnt++;
+    mbus_send(msc, pkt, sizeof(pkt));
+  }
+  return 0;
+}
