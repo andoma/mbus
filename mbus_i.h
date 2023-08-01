@@ -124,6 +124,8 @@ void mbus_flow_create(mbus_t *m, mbus_flow_t *mf);
 void mbus_flow_write_header(uint8_t pkt[static 3],
                             const mbus_t *m, const mbus_flow_t *mf, int init);
 
-
 mbus_con_t *mbus_seqpkt_connect_locked(mbus_t *m, uint8_t remote_addr,
                                        const char *service);
+
+mbus_con_t *mbus_gdpkt_connect_locked(mbus_t *m, uint8_t remote_addr,
+                                      const char *service);
