@@ -107,6 +107,7 @@ mbus_create_ble(const char *host, uint8_t local_addr,
   struct sockaddr_l2 addr = {0};
 
   addr.l2_family = AF_BLUETOOTH;
+  addr.l2_bdaddr_type = BDADDR_LE_RANDOM;
   if(bind(fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
     perror("bind");
     exit(1);
