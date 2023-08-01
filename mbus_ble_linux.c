@@ -1,5 +1,3 @@
-#ifdef __linux__
-
 #include "mbus_i.h"
 
 #include <errno.h>
@@ -157,4 +155,3 @@ mbus_create_ble(const char *host, uint8_t local_addr,
 
   return &mb->m;
 }
-#endif
