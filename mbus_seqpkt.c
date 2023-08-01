@@ -134,7 +134,6 @@ mbus_seqpkt_connect_locked(mbus_t *m, uint8_t remote_addr, const char *service)
 
   pthread_cond_init(&msc->msc_tx_cond, NULL);
   pthread_cond_init(&msc->msc_rx_cond, NULL);
-  LIST_INSERT_HEAD(&m->m_seqpkt_cons, msc, msc_link);
   msc->msc_mbus = m;
   TAILQ_INIT(&msc->msc_txq);
   TAILQ_INIT(&msc->msc_rxq);

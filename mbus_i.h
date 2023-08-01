@@ -61,8 +61,6 @@ typedef struct mbus {
 
   struct mbus_flow_list m_flows;
 
-  struct mbus_seqpkt_con_list m_seqpkt_cons;
-
   struct mbus_timer_list m_timers;
 
   struct mbus_con *m_rpc_channels[32];
