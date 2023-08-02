@@ -53,7 +53,7 @@ typedef struct mbus_gdpkt_con {
 
   int32_t msc_next_xmit;
 
-  int msc_xmit_credits;
+  uint16_t msc_xmit_credits;
 
 } mbus_gdpkt_con_t;
 
@@ -74,7 +74,7 @@ mbus_gdpkt_connect_locked(mbus_t *m, uint8_t remote_addr, const char *service)
 {
   mbus_gdpkt_con_t *msc = calloc(1, sizeof(mbus_gdpkt_con_t));
 
-  msc->msc_xmit_credits = 15;
+  msc->msc_xmit_credits = 1;
 
   pthread_cond_init(&msc->msc_tx_cond, NULL);
   pthread_cond_init(&msc->msc_rx_cond, NULL);
@@ -96,7 +96,8 @@ mbus_gdpkt_connect_locked(mbus_t *m, uint8_t remote_addr, const char *service)
 
   memcpy(pkt + 4, service, svclen);
 
-  m->m_send(m, pkt, pktlen, NULL);
+  struct timespec deadline = mbus_deadline_from_timeout(10000);
+  m->m_send(m, pkt, pktlen, &deadline);
 
   mbus_con_t *mc = calloc(1, sizeof(mbus_con_t));
   mc->backend = msc;
