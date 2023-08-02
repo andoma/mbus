@@ -97,7 +97,11 @@ mbus_gdpkt_connect_locked(mbus_t *m, uint8_t remote_addr, const char *service)
   memcpy(pkt + 4, service, svclen);
 
   struct timespec deadline = mbus_deadline_from_timeout(10000);
-  m->m_send(m, pkt, pktlen, &deadline);
+  if(m->m_send(m, pkt, pktlen, &deadline)) {
+    mbus_flow_remove(&msc->msc_flow);
+    free(msc);
+    return NULL;
+  }
 
   mbus_con_t *mc = calloc(1, sizeof(mbus_con_t));
   mc->backend = msc;

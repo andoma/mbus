@@ -46,7 +46,10 @@ mbus_remote_shell(mbus_t *m, uint8_t target_addr, const char *service)
   printf("* Exit with ^B\n");
 
   mbus_con_t *msc = mbus_connect(m, target_addr, service);
-
+  if(msc == NULL) {
+    fprintf(stderr, "Failed to connect\n");
+    exit(1);
+  }
   if(tcgetattr(0, &termio) == -1) {
     perror("tcgetattr");
     exit(1);
