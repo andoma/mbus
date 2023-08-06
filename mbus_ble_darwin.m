@@ -5,6 +5,13 @@
 
 TAILQ_HEAD(pkt_queue, pkt);
 
+typedef struct pkt {
+  TAILQ_ENTRY(pkt) link;
+  size_t len;
+  uint8_t data[0];
+} pkt_t;
+
+
 typedef struct mbus_ble mbus_ble_t;
 
 @class BleGateway;
@@ -13,6 +20,9 @@ typedef struct mbus_ble mbus_ble_t;
 {
   uint8_t rxbuf[256];
   size_t rxlen;
+  bool maytx;
+  struct pkt_queue txq;
+  size_t txqlen;
 }
 
 -(id)initWithGateway:(BleGateway *)gw l2cap:(CBL2CAPChannel *)channel;
@@ -25,6 +35,7 @@ typedef struct mbus_ble mbus_ble_t;
 
 @interface BleGateway : NSObject<CBCentralManagerDelegate, CBPeripheralDelegate>
 {
+  pthread_cond_t primary_cond;
 }
 
 -(id)initWithMbus:(mbus_ble_t *)m;
@@ -51,6 +62,7 @@ struct mbus_ble {
 -(id)initWithMbus:(mbus_ble_t *)m {
   self.mbus = m;
   self.centralManager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
+  pthread_cond_init(&primary_cond, NULL);
   self.connections = [[NSMutableArray alloc] init];
   return [self init];
 }
@@ -139,15 +151,20 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   } else {
     NSLog(@"Connected to peripheral %@", self.discoveredPeripheral);
     Connection *c = [[Connection alloc] initWithGateway:self l2cap:channel];
-    printf("concreate:%ld\n", CFGetRetainCount(c));
+    printf("refcount:%ld\n", CFGetRetainCount(c));
     [self.connections addObject: c];
 
     if(channel.PSM == 0xc3) {
+
+      pthread_mutex_lock(&self.mbus->m.m_mutex);
       self.primary = c;
+      pthread_cond_signal(&primary_cond);
+      pthread_mutex_unlock(&self.mbus->m.m_mutex);
+
       NSLog(@"Primary connection established");
     }
     [c release];
-    printf("concreate:%ld\n", CFGetRetainCount(c));
+    printf("refcount:%ld\n", CFGetRetainCount(c));
   }
 }
 
@@ -161,6 +178,17 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   pthread_mutex_unlock(&self.mbus->m.m_mutex);
 }
 
+-(Connection *)getConnection:(const struct timespec *)deadline
+{
+  while(self.primary == nil) {
+    if(pthread_cond_timedwait(&primary_cond, &self.mbus->m.m_mutex,
+                              deadline) == ETIMEDOUT) {
+      return nil;
+    }
+  }
+  return self.primary;
+}
+
 
 @end
 
@@ -169,13 +197,16 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 -(id)initWithGateway:(BleGateway *)gw l2cap:(CBL2CAPChannel *)c
 {
   rxlen = 0;
-
+  maytx = false;
+  TAILQ_INIT(&txq);
+  txqlen = 0;
   self.gateway = gw;
   self.channel = c;
   [c.inputStream open];
   [c.outputStream open];
 
   c.inputStream.delegate = self;
+  c.outputStream.delegate = self;
 
   NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
 
@@ -201,10 +232,53 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   [self.gateway deleteConnection:self];
 }
 
+-(void)maybeTx
+{
+  if(!maytx)
+    return;
+
+  mbus_ble_t *mb = self.gateway.mbus;
+  mbus_t *m = &mb->m;
+
+  pthread_mutex_lock(&m->m_mutex);
+  pkt_t *pkt = TAILQ_FIRST(&txq);
+  if(pkt != NULL) {
+    maytx = false;
+    TAILQ_REMOVE(&txq, pkt, link);
+    txqlen--;
+
+    mbus_pkt_trace(m, "TX", pkt->data + 2, pkt->len - 2, 2);
+
+    int n = [self.channel.outputStream write:pkt->data maxLength:pkt->len];
+    if(n != pkt->len) {
+      fprintf(stderr, "BLE send failed\n");
+    }
+    free(pkt);
+  }
+  pthread_mutex_unlock(&m->m_mutex);
+}
+
+-(void)enqTx:(pkt_t *)pkt
+{
+  TAILQ_INSERT_TAIL(&txq, pkt, link);
+  txqlen++;
+  printf("txqlen:%zd\n", txqlen);
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+      [self maybeTx];
+    });
+}
 
 -(void)stream:(NSStream *)aStream handleEvent:(NSStreamEvent)eventCode
 {
   mbus_ble_t *mb = self.gateway.mbus;
+
+  if(aStream == self.channel.outputStream) {
+    printf("outputstream event %ld\n", eventCode);
+    maytx = true;
+    [self maybeTx];
+    return;
+  }
 
   switch(eventCode) {
   default:
@@ -259,47 +333,26 @@ mbus_ble_send(mbus_t *m, const void *data,
   mbus_ble_t *mb = (mbus_ble_t *)m;
   size_t pktlen = 2 + len + 4;
 
-  uint8_t *pkt = malloc(pktlen);
+  pkt_t *pkt = malloc(sizeof(pkt_t) + pktlen);
+  pkt->len = pktlen;
+  uint8_t *pd = pkt->data;
 
-  memcpy(pkt + 2, data, len);
-  uint32_t crc = ~mbus_crc32(0, pkt + 2, len);
-  memcpy(pkt + 2 + len, &crc, 4);
-  mbus_pkt_trace(m, "TX", pkt + 2, len + 4, 2);
-  pkt[0] = (len + 4);
-  pkt[1] = (len + 4) >> 8;
+  memcpy(pd + 2, data, len);
+  uint32_t crc = ~mbus_crc32(0, pd + 2, len);
+  memcpy(pd + 2 + len, &crc, 4);
+  pd[0] = (len + 4);
+  pd[1] = (len + 4) >> 8;
 
-  dispatch_async(dispatch_get_main_queue(), ^{
-      Connection *c = mb->gateway.primary;
-      if(c) {
-        printf("Attempt to transmit\n");
-        int n = [c.channel.outputStream write:pkt maxLength:pktlen];
-        printf("xmit:%d\n", n);
-        if(n != pktlen) {
-          fprintf(stderr, "BLE Short send tried:%zd did:%d\n", pktlen, n);
-          abort();
-        }
-      }
-      free(pkt);
-    });
-#if 0
-  [c retain];
 
-  pthread_mutex_unlock(&m->m_mutex);
-#if 1
-  while(![c.channel.outputStream hasSpaceAvailable]) {
-    usleep(100000);
-    printf("WAT LOL NO SPACE HEH\n");
+  Connection *c = [mb->gateway getConnection:deadline];
+  if(c) {
+    [c enqTx:pkt];
+    return 0;
+  } else {
+    free(pkt);
+    return  MBUS_ERR_NOT_CONNECTED;
   }
-#endif
-  int n = [c.channel.outputStream write:pkt maxLength:pktlen];
-  if(n != pktlen) {
-    fprintf(stderr, "BLE Short send tried:%zd did:%d\n", pktlen, n);
-    abort();
-  }
-  pthread_mutex_lock(&m->m_mutex);
-  [c release];
-#endif
-  return 0;
+
 }
 
 mbus_t *
