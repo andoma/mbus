@@ -466,6 +466,9 @@ mbus_seqpkt_close_locked(void *be, int wait)
   clearq(&msc->msc_txq);
   clearq(&msc->msc_rxq);
   mbus_flow_remove(&msc->msc_flow);
+  mbus_timer_disarm(&msc->msc_ack_timer);
+  mbus_timer_disarm(&msc->msc_rtx_timer);
+  mbus_timer_disarm(&msc->msc_ka_timer);
   free(msc);
 }
 
