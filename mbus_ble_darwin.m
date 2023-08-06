@@ -219,6 +219,9 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 
 -(void)destroy
 {
+  mbus_ble_t *mb = self.gateway.mbus;
+  mbus_gateway_disconnect(&mb->m);
+
   self.channel.inputStream.delegate = nil;
   [self.channel.inputStream close];
   [self.channel.inputStream removeFromRunLoop:[NSRunLoop currentRunLoop]

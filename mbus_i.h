@@ -115,6 +115,8 @@ void mbus_pkt_trace(const mbus_t *m, const char *prefix,
 void mbus_gateway_recv_multicast(struct mbus *m, const uint8_t *pkt,
                                  size_t len);
 
+void mbus_gateway_disconnect(struct mbus *m);
+
 mbus_flow_t *mbus_flow_find(mbus_t *m, uint8_t remote_addr, uint16_t flow);
 
 void mbus_flow_insert(mbus_t *m, mbus_flow_t *mf);

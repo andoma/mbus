@@ -21,6 +21,7 @@ typedef struct mbus_gateway_flow {
 
   uint16_t mgf_peer_flow;
   uint8_t mgf_peer_addr;
+  uint8_t mgf_type;
   struct peer *mgf_peer;
 
   LIST_ENTRY(mbus_gateway_flow) mgf_peer_link;
@@ -71,6 +72,18 @@ peer_find_flow(peer_t *p, uint8_t peer_addr,
 
 
 static void
+mgf_send_close_to_peer(mbus_gateway_flow_t *mgf)
+{
+  uint8_t pkt[4];
+  const uint16_t flow = mgf->mgf_peer_flow;
+  pkt[0] = mgf->mgf_peer_addr;
+  pkt[1] = ((flow >> 3) & 0x60) | mgf->mgf_flow.mf_remote_addr;
+  pkt[2] = flow;
+  pkt[3] = 0x80; // Close
+  send_to_peer(mgf->mgf_peer, pkt, sizeof(pkt));
+}
+
+static void
 mgf_destroy(mbus_t *m, mbus_gateway_flow_t *mgf, const char *reason)
 {
   mbus_log(m, "GW: Destroyed flow bus:%d/%d peer:%d/%d %s",
@@ -103,7 +116,8 @@ gateway_flow_input(struct mbus *m, struct mbus_flow *mf,
 
   send_to_peer(mgf->mgf_peer, dup, 3 + len);
 
-  mbus_timer_arm(m, &mgf->mgf_timer, mbus_get_ts() + FLOW_EXPIRE);
+  if(mgf->mgf_timer.mt_cb)
+    mbus_timer_arm(m, &mgf->mgf_timer, mbus_get_ts() + FLOW_EXPIRE);
 }
 
 
@@ -147,6 +161,7 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
       mgf_destroy(m, mgf, "reinit");
 
     mgf = calloc(1, sizeof(mbus_gateway_flow_t));
+    mgf->mgf_type = pkt[3];
     mgf->mgf_flow.mf_remote_addr = dst_addr;
     mgf->mgf_flow.mf_input = gateway_flow_input;
     mgf->mgf_peer_flow = flow;
@@ -156,20 +171,24 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
     mbus_flow_create(m, &mgf->mgf_flow);
 
     mgf->mgf_timer.mt_opaque = mgf;
-    mgf->mgf_timer.mt_cb = gateway_flow_timeout;
 
-    mbus_log(m, "GW: Created flow bus:%d/%d peer:%d/%d",
+    if(mgf->mgf_type != 3) // Guaranteed delivery -> no timeouts
+      mgf->mgf_timer.mt_cb = gateway_flow_timeout;
+
+    mbus_log(m, "GW: Created flow bus:%d/%d peer:%d/%d type:%d",
              mgf->mgf_flow.mf_remote_addr,
              mgf->mgf_flow.mf_flow,
              mgf->mgf_peer_addr,
-             mgf->mgf_peer_flow);
+             mgf->mgf_peer_flow,
+             mgf->mgf_type);
 
   } else {
     if(mgf == NULL)
       return;
   }
 
-  mbus_timer_arm(m, &mgf->mgf_timer, mbus_get_ts() + FLOW_EXPIRE);
+  if(mgf->mgf_timer.mt_cb)
+    mbus_timer_arm(m, &mgf->mgf_timer, mbus_get_ts() + FLOW_EXPIRE);
 
   uint8_t dup[len];
   memcpy(dup, pkt, len);
@@ -324,5 +343,24 @@ mbus_gateway_recv_multicast(struct mbus *m, const uint8_t *pkt, size_t len)
   peer_t *p;
   LIST_FOREACH(p, &g->g_peers, p_link) {
     send_to_peer(p, pkt, len);
+  }
+}
+
+void
+mbus_gateway_disconnect(struct mbus *m)
+{
+  gateway_t *g = m->m_gateway;
+  if(g == NULL)
+    return;
+  mbus_gateway_flow_t *mgf, *n;
+  peer_t *p;
+  LIST_FOREACH(p, &g->g_peers, p_link) {
+    for(mgf = LIST_FIRST(&p->p_flows); mgf != NULL; mgf = n) {
+      n = LIST_NEXT(mgf, mgf_peer_link);
+      if(mgf->mgf_type == 3) {
+        mgf_send_close_to_peer(mgf);
+        mgf_destroy(m, mgf, "Primary connection lost");
+      }
+    }
   }
 }
