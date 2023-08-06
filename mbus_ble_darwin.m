@@ -151,7 +151,6 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   } else {
     NSLog(@"Connected to peripheral %@", self.discoveredPeripheral);
     Connection *c = [[Connection alloc] initWithGateway:self l2cap:channel];
-    printf("refcount:%ld\n", CFGetRetainCount(c));
     [self.connections addObject: c];
 
     if(channel.PSM == 0xc3) {
@@ -164,7 +163,6 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
       NSLog(@"Primary connection established");
     }
     [c release];
-    printf("refcount:%ld\n", CFGetRetainCount(c));
   }
 }
 
@@ -262,8 +260,6 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 {
   TAILQ_INSERT_TAIL(&txq, pkt, link);
   txqlen++;
-  printf("txqlen:%zd\n", txqlen);
-
   dispatch_async(dispatch_get_main_queue(), ^{
       [self maybeTx];
     });
@@ -274,9 +270,10 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
   mbus_ble_t *mb = self.gateway.mbus;
 
   if(aStream == self.channel.outputStream) {
-    printf("outputstream event %ld\n", eventCode);
-    maytx = true;
-    [self maybeTx];
+    if(eventCode == 4) {
+      maytx = true;
+      [self maybeTx];
+    }
     return;
   }
 

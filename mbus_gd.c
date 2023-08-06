@@ -168,7 +168,6 @@ mbus_gdpkt_send_locked(void *be, const void *data, size_t len)
       return MBUS_ERR_NOT_CONNECTED;
 
     if(msc->msc_xmit_credits == 0) {
-      printf("credit stall\n");
       pthread_cond_wait(&msc->msc_tx_cond, &m->m_mutex);
       continue;
     }
