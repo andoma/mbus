@@ -68,6 +68,8 @@ typedef struct mbus {
   struct mbus_con *(*m_connect_locked)(mbus_t *m, uint8_t remote_addr,
                                        const char *service);
 
+  uint8_t m_connect_flowtype;
+
 } mbus_t;
 
 struct mbus_con {

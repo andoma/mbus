@@ -60,129 +60,6 @@ tcp_rx_thread(void *arg)
 }
 
 
-
-
-typedef struct {
-  int be_fd;
-  mbus_t *be_m;
-} mbus_tcp_conn_backend_t;
-
-
-static mbus_error_t
-mbus_tcp_conn_send_locked(void *backend, const void *data, size_t len)
-{
-  mbus_tcp_conn_backend_t *be = backend;
-  mbus_t *m = be->be_m;
-  int fd = be->be_fd;
-
-  pthread_mutex_unlock(&m->m_mutex);
-
-  uint8_t pkt[1 + len];
-  pkt[0] = len;
-  memcpy(pkt + 1, data, len);
-  len++;
-  int res = write(fd, pkt, len);
-  pthread_mutex_lock(&m->m_mutex);
-  if(res != len) {
-    return MBUS_ERR_TX;
-  }
-  return 0;
-}
-
-static int
-mbus_tcp_conn_recv_locked(void *backend, void **ptr)
-{
-  mbus_tcp_conn_backend_t *be = backend;
-  mbus_t *m = be->be_m;
-  int fd = be->be_fd;
-
-  int rval = 0;
-
-  uint8_t plen;
-  uint8_t pkt[256];
-
-  pthread_mutex_unlock(&m->m_mutex);
-
-  *ptr = NULL;
-  if(recv(fd, &plen, 1, MSG_WAITALL) == 1 &&
-     recv(fd, pkt, plen, MSG_WAITALL) == plen) {
-
-    void *d = malloc(plen);
-    memcpy(d, pkt, plen);
-    *ptr = d;
-    rval = plen;
-  }
-
-  pthread_mutex_lock(&m->m_mutex);
-  return rval;
-}
-
-static void
-mbus_tcp_conn_shutdown_locked(void *backend)
-{
-  mbus_tcp_conn_backend_t *be = backend;
-  int fd = be->be_fd;
-  shutdown(fd, 2);
-}
-
-static void
-mbus_tcp_conn_close_locked(void *backend, int wait)
-{
-  mbus_tcp_conn_backend_t *be = backend;
-  int fd = be->be_fd;
-  close(fd);
-  free(be);
-}
-
-static mbus_con_t *
-mbus_conn_connect(mbus_t *m, uint8_t remote_addr, const char *service)
-{
-  mbus_tcp_t *mt = (mbus_tcp_t *)m;
-
-  int fd = socket(AF_INET, SOCK_STREAM, 0);
-
-  if(connect(fd, (struct sockaddr *)&mt->mt_remoteaddr, sizeof(mt->mt_remoteaddr)) < 0) {
-    perror("connect");
-    return NULL;
-  }
-
-  int smol = 2048;
-  int r = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &smol, sizeof(smol));
-  if(r < 0)
-    perror("SO_SNDBUF");
-
-  const size_t servicelen = strlen(service);
-  const size_t hdrlen = 1 + 1 + 1 + servicelen;
-  uint8_t hdr[hdrlen];
-
-  hdr[0] = 2; // Connection mode
-  hdr[1] = 1 + servicelen; // Packet length
-  hdr[2] = remote_addr;
-  memcpy(hdr + 3, service, servicelen);
-
-  if(write(fd, hdr, hdrlen) != hdrlen) {
-    fprintf(stderr, "Failed to send initial header\n");
-    close(fd);
-    return NULL;
-  }
-
-  mbus_tcp_conn_backend_t *be = calloc(1, sizeof(mbus_tcp_conn_backend_t));
-
-  be->be_fd = fd;
-  be->be_m = m;
-  mbus_con_t *mc = calloc(1, sizeof(mbus_con_t));
-  mc->backend = be;
-  mc->m = m;
-  mc->send_locked = mbus_tcp_conn_send_locked;
-  mc->recv_locked = mbus_tcp_conn_recv_locked;
-  mc->shutdown_locked = mbus_tcp_conn_shutdown_locked;
-  mc->close_locked = mbus_tcp_conn_close_locked;
-
-  return mc;
-}
-
-
-
 mbus_t *
 mbus_create_tcp(const char *host, int port, uint8_t local_addr,
                 mbus_log_cb_t *log_cb, void *aux)
@@ -200,9 +77,9 @@ mbus_create_tcp(const char *host, int port, uint8_t local_addr,
     return NULL;
   }
 
-  uint8_t hdr = 1;
-  if(write(fd, &hdr, 1) != 1) {
-    fprintf(stderr, "Failed to send initial header\n");
+  uint8_t hdr = 0;
+  if(recv(fd, &hdr, 1, MSG_WAITALL) != 1) {
+    fprintf(stderr, "Failed to recv initial header\n");
     close(fd);
     return NULL;
   }
@@ -213,9 +90,11 @@ mbus_create_tcp(const char *host, int port, uint8_t local_addr,
 
   mt->m.m_our_addr = local_addr;
   mt->m.m_send = mbus_tcp_send;
-  mt->m.m_connect_locked = mbus_conn_connect;
-  mbus_init_common(&mt->m, log_cb, aux);
+  if(hdr == 3) {
+    mt->m.m_connect_locked = mbus_gdpkt_connect_locked;
+  }
 
+  mbus_init_common(&mt->m, log_cb, aux);
 
   pthread_attr_t attr;
   pthread_attr_init(&attr);

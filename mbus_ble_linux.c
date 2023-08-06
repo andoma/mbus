@@ -188,6 +188,7 @@ mbus_create_ble(const char *host, uint8_t local_addr,
   mb->m.m_our_addr = local_addr;
   mb->m.m_send = mbus_ble_send;
   mb->m.m_connect_locked = mbus_gdpkt_connect_locked;
+  mb->m.m_connect_flowtype = 3;
 
   mbus_init_common(&mb->m, log_cb, aux);
 

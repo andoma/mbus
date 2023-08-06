@@ -207,79 +207,18 @@ peer_raw_mode(peer_t *p)
   pthread_mutex_unlock(&m->m_mutex);
 }
 
-
-static void *
-peer_coon_thread(void *arg)
-{
-  peer_t *p = arg;
-
-  while(1) {
-    void *pkt;
-    int len = mbus_recv(p->p_mc, &pkt);
-    if(len <= 0)
-      break;
-    send_to_peer(p, pkt, len);
-    free(pkt);
-  }
-  shutdown(p->p_fd, 2);
-  return NULL;
-}
-
-static void
-peer_conn_mode(peer_t *p)
-{
-  uint8_t plen;
-  uint8_t pkt[257];
-
-  if(recv(p->p_fd, &plen, 1, MSG_WAITALL) != 1)
-    return;
-  if(recv(p->p_fd, pkt, plen, MSG_WAITALL) != plen)
-    return;
-
-  pkt[plen] = 0;
-  uint8_t remote_addr = pkt[0];
-  mbus_con_t *mc = mbus_connect(p->p_gw->g_mbus,
-                                remote_addr, (const char *)pkt + 1);
-
-  if(mc == NULL)
-    return;
-
-  p->p_mc = mc;
-  pthread_t tid;
-
-  pthread_create(&tid, NULL, peer_coon_thread, p);
-
-  while(1) {
-    if(recv(p->p_fd, &plen, 1, MSG_WAITALL) != 1)
-      break;
-    if(recv(p->p_fd, pkt, plen, MSG_WAITALL) != plen)
-      break;
-    mbus_send(mc, pkt, plen);
-  }
-  mbus_shutdown(mc);
-  pthread_join(tid, NULL);
-  mbus_close(mc, 1);
-}
-
 static void *
 peer_thread(void *arg)
 {
   peer_t *p = arg;
 
-  uint8_t hdr;
+  mbus_t *m = p->p_gw->g_mbus;
+  uint8_t hdr = m->m_connect_flowtype;
 
-  if(recv(p->p_fd, &hdr, 1, MSG_WAITALL) == 1) {
-    switch(hdr) {
-    case 1:
-      peer_raw_mode(p);
-      break;
-    case 2:
-      peer_conn_mode(p);
-      break;
-    }
+  if(write(p->p_fd, &hdr, 1) == 1) {
+    peer_raw_mode(p);
   }
 
-  mbus_t *m = p->p_gw->g_mbus;
   mbus_log(m, "GW: Peer disconnected");
   pthread_mutex_lock(&m->m_mutex);
   LIST_REMOVE(p, p_link);
