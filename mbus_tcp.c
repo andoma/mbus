@@ -6,9 +6,7 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-
-
-
+#include <netinet/tcp.h>
 
 typedef struct mbus_tcp {
   mbus_t m;
@@ -22,6 +20,8 @@ static mbus_error_t
 mbus_tcp_send(mbus_t *m, const void *data,
               size_t len, const struct timespec *deadline)
 {
+  mbus_pkt_trace(m, "TX", data, len, 2);
+
   mbus_tcp_t *mt = (mbus_tcp_t *)m;
   int plen = 1 + len;
   uint8_t pkt[plen];
@@ -71,6 +71,9 @@ mbus_create_tcp(const char *host, int port, uint8_t local_addr,
   };
 
   int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+  int val = 1;
+  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val));
 
   if(connect(fd, (struct sockaddr *)&remoteaddr, sizeof(remoteaddr)) < 0) {
     perror("connect");

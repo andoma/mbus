@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <sys/queue.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -292,6 +293,9 @@ mbus_gateway0(gateway_t *g)
     r = setsockopt(pfd, SOL_SOCKET, SO_SNDBUF, &smol, sizeof(smol));
     if(r < 0)
       perror("SO_SNDBUF");
+
+    int val = 1;
+    setsockopt(pfd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val));
 
     peer_t *p = calloc(1, sizeof(peer_t));
 
