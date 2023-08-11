@@ -75,6 +75,9 @@ struct mbus_ble {
   [self.centralManager scanForPeripheralsWithServices:uuidList
                                               options:@{ CBCentralManagerScanOptionAllowDuplicatesKey : @NO }];
   NSLog(@"Scanning started");
+  mbus_t *m = &self.mbus->m;
+  if(m->m_status_cb)
+    m->m_status_cb(m->m_aux, MBUS_SCANNING);
 }
 
 
@@ -150,10 +153,14 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 
   } else {
     NSLog(@"Connected to peripheral %@", self.discoveredPeripheral);
+
     Connection *c = [[Connection alloc] initWithGateway:self l2cap:channel];
     [self.connections addObject: c];
 
     if(channel.PSM == 0xc3) {
+      mbus_t *m = &self.mbus->m;
+      if(m->m_status_cb)
+        m->m_status_cb(m->m_aux, MBUS_CONNECTED);
 
       pthread_mutex_lock(&self.mbus->m.m_mutex);
       self.primary = c;
@@ -174,6 +181,11 @@ didOpenL2CAPChannel:(CBL2CAPChannel *)channel
 
   [self.connections removeObject:c];
   pthread_mutex_unlock(&self.mbus->m.m_mutex);
+
+  mbus_t *m = &self.mbus->m;
+  if(m->m_status_cb)
+    m->m_status_cb(m->m_aux, MBUS_DISCONNECTED);
+
 }
 
 -(Connection *)getConnection:(const struct timespec *)deadline
@@ -357,7 +369,7 @@ mbus_ble_send(mbus_t *m, const void *data,
 
 mbus_t *
 mbus_create_ble(const char *name, uint8_t local_addr,
-                mbus_log_cb_t *log_cb, void *aux)
+                mbus_log_cb_t *log_cb, mbus_status_cb_t *status_cb, void *aux)
 {
   mbus_ble_t *mb = calloc(1, sizeof(mbus_ble_t));
 
@@ -367,7 +379,7 @@ mbus_create_ble(const char *name, uint8_t local_addr,
   mb->m.m_send = mbus_ble_send;
   mb->m.m_connect_locked = mbus_gdpkt_connect_locked;
   mb->m.m_connect_flowtype = 3;
-  mbus_init_common(&mb->m, log_cb, aux);
+  mbus_init_common(&mb->m, log_cb, status_cb, aux);
 
   mb->gateway = [[BleGateway alloc] initWithMbus:mb];
   return &mb->m;

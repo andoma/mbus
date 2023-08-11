@@ -56,6 +56,7 @@ typedef struct mbus {
   int m_debug_level;
 
   mbus_log_cb_t *m_log_cb;
+  mbus_status_cb_t *m_status_cb;
   void *m_aux;
   int64_t m_def_log_prev;
 
@@ -90,7 +91,8 @@ void mbus_timer_arm(mbus_t *m, mbus_timer_t *t, int64_t expire);
 
 void mbus_timer_disarm(mbus_timer_t *t);
 
-void mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux);
+void mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb,
+                      mbus_status_cb_t *status_cb, void *aux);
 
 uint32_t mbus_crc32(uint32_t crc, const void *data, size_t n_bytes);
 

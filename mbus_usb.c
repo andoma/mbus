@@ -24,9 +24,6 @@ typedef struct {
   char *mu_serial;
   pthread_cond_t mu_handle_cond;
 
-  void (*mu_status_cb)(void *aux, mbus_status_t status);
-  void *mu_aux;
-
 } mbus_usb_t;
 
 
@@ -190,8 +187,8 @@ mbus_thread(void *arg)
       pthread_cond_broadcast(&mu->mu_handle_cond);
       pthread_mutex_unlock(&mu->m.m_mutex);
 
-      if(mu->mu_status_cb != NULL)
-        mu->mu_status_cb(mu->mu_aux, MBUS_CONNECTED);
+      if(mu->m.m_status_cb != NULL)
+        mu->m.m_status_cb(mu->m.m_aux, MBUS_CONNECTED);
 
       while (1) {
         uint8_t pkt[64];
@@ -216,8 +213,8 @@ mbus_thread(void *arg)
       mu->mu_handle = NULL;
       pthread_mutex_unlock(&mu->m.m_mutex);
 
-      if(mu->mu_status_cb != NULL)
-        mu->mu_status_cb(mu->mu_aux, MBUS_DISCONNECTED);
+      if(mu->m.m_status_cb != NULL)
+        mu->m.m_status_cb(mu->m.m_aux, MBUS_DISCONNECTED);
       libusb_release_interface(dh, mu->mu_interface);
       libusb_close(dh);
     }
@@ -235,17 +232,15 @@ mbus_usb_destroy(mbus_t *m)
 }
 
 
-
 mbus_t *
 mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
                 const char *serial,
                 uint8_t local_addr,
                 mbus_log_cb_t *log_cb,
-                void (*status_cb)(void *aux, mbus_status_t status),
+                mbus_status_cb_t *status_cb,
                 void *aux)
 {
   mbus_usb_t *mu = calloc(1, sizeof(mbus_usb_t));
-  mu->mu_status_cb = status_cb;
   mu->m.m_our_addr = local_addr;
   mu->mu_mbus_vendor_subclass = vendor_subclass;
   pthread_condattr_t attr;
@@ -263,7 +258,7 @@ mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
   mu->m.m_send = mbus_usb_send;
   mu->m.m_destroy = mbus_usb_destroy;
 
-  mbus_init_common(&mu->m, log_cb, aux);
+  mbus_init_common(&mu->m, log_cb, status_cb, aux);
 
   pthread_create(&mu->mu_tid, NULL, mbus_thread, mu);
   return &mu->m;

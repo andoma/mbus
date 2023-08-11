@@ -62,7 +62,7 @@ tcp_rx_thread(void *arg)
 
 mbus_t *
 mbus_create_tcp(const char *host, int port, uint8_t local_addr,
-                mbus_log_cb_t *log_cb, void *aux)
+                mbus_log_cb_t *log_cb, mbus_status_cb_t *status_cb, void *aux)
 {
   struct sockaddr_in remoteaddr = {
     .sin_family = AF_INET,
@@ -97,7 +97,7 @@ mbus_create_tcp(const char *host, int port, uint8_t local_addr,
     mt->m.m_connect_locked = mbus_gdpkt_connect_locked;
   }
 
-  mbus_init_common(&mt->m, log_cb, aux);
+  mbus_init_common(&mt->m, log_cb, status_cb, aux);
 
   pthread_attr_t attr;
   pthread_attr_init(&attr);

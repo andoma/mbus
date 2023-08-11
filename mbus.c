@@ -44,12 +44,14 @@ static mbus_t *mbus_create_dummy(void);
 
 mbus_t *
 mbus_create_from_constr(const char *str0, uint8_t local_addr,
-                        mbus_log_cb_t *log_cb, void *aux)
+                        mbus_log_cb_t *log_cb,
+                        mbus_status_cb_t status_cb,
+                        void *aux)
 {
 #ifdef HAVE_BLE
   if(!strncmp(str0, "ble:", 4)) {
     return mbus_create_ble(str0+4, // Hostname
-                           local_addr, log_cb, aux);
+                           local_addr, log_cb, status_cb, aux);
   }
 #endif
   const size_t slen = strlen(str0) + 1;
@@ -62,7 +64,7 @@ mbus_create_from_constr(const char *str0, uint8_t local_addr,
   if(argc == 3 && !strcmp(argv[0], "tcp")) {
     return mbus_create_tcp(argv[1], // Hostname
                            atoi(argv[2]), // Port
-                           local_addr, log_cb, aux);
+                           local_addr, log_cb, status_cb, aux);
   } else if(argc >= 3 && !strcmp(argv[0], "usb")) {
     return mbus_create_usb(strtol(argv[1], NULL, 16),    // VID
                            strtol(argv[2], NULL, 16),    // PID
@@ -70,7 +72,7 @@ mbus_create_from_constr(const char *str0, uint8_t local_addr,
                            argc > 4 ? argv[4] : NULL,    // Serial number
                            local_addr,
                            log_cb,
-                           NULL, aux);
+                           status_cb, aux);
   } else if(argc == 1 && !strcmp(argv[0], "none")) {
     return mbus_create_dummy();
   } else {
@@ -272,9 +274,12 @@ mbus_log(const mbus_t *m, const char *fmt, ...)
 
 
 void
-mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb, void *aux)
+mbus_init_common(mbus_t *m, mbus_log_cb_t *log_cb,
+                 mbus_status_cb_t *status_cb, void *aux)
 {
   m->m_log_cb = log_cb ?: def_log_cb;
+  m->m_status_cb = status_cb;
+
   m->m_aux = log_cb ? aux : m;
 
   if(m->m_connect_locked == NULL)
@@ -836,7 +841,7 @@ mbus_create_dummy(void)
 {
   mbus_t *m = calloc(1, sizeof(mbus_t));
   m->m_send =  dummy_send;
-  mbus_init_common(m, NULL, NULL);
+  mbus_init_common(m, NULL, NULL, NULL);
   return m;
 }
 

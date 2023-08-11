@@ -51,13 +51,17 @@ typedef enum {
 } mbus_error_t;
 
 typedef enum {
+  MBUS_UNKNOWN_STATUS = 0,
   MBUS_CONNECTED = 1,
   MBUS_DISCONNECTED = 2,
+  MBUS_SCANNING = 3,
 } mbus_status_t;
 
 typedef struct mbus mbus_t;
 
 typedef void (mbus_log_cb_t)(void *aux, const char *msg);
+
+typedef void (mbus_status_cb_t)(void *aux, mbus_status_t s);
 
 int64_t mbus_get_ts(void);
 
@@ -66,22 +70,29 @@ void mbus_set_debug_level(mbus_t *m, int level);
 mbus_t *mbus_create_usb(uint16_t vid, uint16_t pid, int vendor_subclass,
                         const char *serial, uint8_t local_addr,
                         mbus_log_cb_t *log_cb,
-                        void (*status_cb)(void *aux, mbus_status_t status),
+                        mbus_status_cb_t status_cb,
                         void *aux);
 
 mbus_t *mbus_create_serial(const char *device, int baudrate,
                            uint8_t local_addr, int full_duplex,
-                           mbus_log_cb_t *log_cb, void *aux);
+                           mbus_log_cb_t *log_cb,
+                           mbus_status_cb_t status_cb,
+                           void *aux);
 
 mbus_t *mbus_create_tcp(const char *host, int port, uint8_t local_addr,
-                        mbus_log_cb_t *log_cb, void *aux);
+                        mbus_log_cb_t *log_cb,
+                        mbus_status_cb_t status_cb,
+                        void *aux);
 
 mbus_t *mbus_create_ble(const char *host, uint8_t local_addr,
-                        mbus_log_cb_t *log_cb, void *aux);
-
+                        mbus_log_cb_t *log_cb,
+                        mbus_status_cb_t status_cb,
+                        void *aux);
 
 mbus_t *mbus_create_from_constr(const char *str, uint8_t local_addr,
-                                mbus_log_cb_t *log_cb, void *aux);
+                                mbus_log_cb_t *log_cb,
+                                mbus_status_cb_t status_cb,
+                                void *aux);
 
 mbus_error_t mbus_invoke(mbus_t *m, uint8_t addr, const char *name,
                          const void *req, size_t req_size, void *reply,
@@ -132,8 +143,6 @@ void mbus_shutdown(mbus_con_t *c);
 void mbus_close(mbus_con_t *c, int wait);
 
 // -- Misc support --------------------------------------------
-
-uint32_t mbus_get_active_hosts(mbus_t *m);
 
 mbus_error_t mbus_ping(mbus_t *m, uint8_t remote_addr);
 
