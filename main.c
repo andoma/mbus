@@ -187,7 +187,7 @@ main(int argc, char **argv)
     exit(1);
   }
   mbus_t *m = mbus_create_from_constr(connect_to, local_addr,
-                                      NULL, NULL);
+                                      NULL, NULL, NULL);
   if(m == NULL) {
     fprintf(stderr, "Failed to create mbus connection\n");
     exit(1);
