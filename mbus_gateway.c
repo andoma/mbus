@@ -73,6 +73,15 @@ peer_find_flow(peer_t *p, uint8_t peer_addr,
 
 
 static void
+mgf_send_close_to_bus(mbus_t *m, mbus_gateway_flow_t *mgf)
+{
+  uint8_t pkt[4];
+  mbus_flow_write_header(pkt, m, &mgf->mgf_flow, 0);
+  pkt[3] = 0x80; // Close
+  m->m_send(m, pkt, 4, NULL);
+}
+
+static void
 mgf_send_close_to_peer(mbus_gateway_flow_t *mgf)
 {
   uint8_t pkt[4];
@@ -158,8 +167,11 @@ peer_process_packet(peer_t *p, const uint8_t *pkt, size_t len)
   mbus_gateway_flow_t *mgf = peer_find_flow(p, src_addr, dst_addr, flow);
 
   if(init) {
-    if(mgf != NULL)
+    if(mgf != NULL) {
+      if(mgf->mgf_type == 3)
+        mgf_send_close_to_bus(m, mgf);
       mgf_destroy(m, mgf, "reinit");
+    }
 
     mgf = calloc(1, sizeof(mbus_gateway_flow_t));
     mgf->mgf_type = pkt[3];
@@ -221,6 +233,8 @@ peer_raw_mode(peer_t *p)
   mbus_gateway_flow_t *mgf;
 
   while((mgf = LIST_FIRST(&p->p_flows)) != NULL) {
+    if(mgf->mgf_type == 3)
+      mgf_send_close_to_bus(m, mgf);
     mgf_destroy(m, mgf, "Peer disconnected");
   }
 
