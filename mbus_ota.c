@@ -173,7 +173,7 @@ mbus_ota_elf_perform_r(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
     uint32_t offset = phdr[i].p_paddr - start_addr;
     uint32_t len = phdr[i].p_filesz;
 
-    mbus_log(m, "OTA: Section %zd at 0x%08x size:0x08%x",
+    mbus_log(m, "OTA: Section %zd at 0x%08x size:0x%08x",
            i, phdr[i].p_paddr, len);
 
     if(pread(fd, image + offset,
