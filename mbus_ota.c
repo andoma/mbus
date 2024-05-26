@@ -62,81 +62,6 @@ mbus_ota_xfer(mbus_t *m, mbus_con_t *mc,
 }
 
 
-// Transmit sections
-static mbus_error_t
-mbus_ota_elf_perform_s(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
-                       int blocksize)
-{
-  size_t count = 0;
-  int r = elf_getphdrnum(elf, &count);
-  if(r) {
-    return MBUS_ERR_MISMATCH;
-  }
-
-  Elf32_Phdr *phdr = elf32_getphdr(elf);
-
-  size_t total_load_size = 0;
-
-  int output_chunks = 0;
-  for(size_t i = 0; i < count; i++) {
-    if(phdr[i].p_type != 1)
-      continue;
-    total_load_size += phdr[i].p_filesz;
-    output_chunks++;
-  }
-
-  const uint32_t header_size =
-    sizeof(flash_multi_write_chunks_t) +
-    sizeof(flash_multi_write_chunk_t) * output_chunks;
-
-  uint32_t image_size = header_size + total_load_size;
-
-  image_size = (image_size + blocksize - 1) & ~(blocksize - 1);
-
-  mbus_log(m, "OTA: Total image size:0x%x (Multiple sections)", image_size);
-
-  void *image = calloc(1, image_size);
-
-  flash_multi_write_chunks_t *c = image;
-
-  uint32_t src_offset = header_size;
-  c->num_chunks = output_chunks;
-  int fail = 0;
-  int j = 0;
-  for(size_t i = 0; i < count; i++) {
-    if(phdr[i].p_type != 1)
-      continue;
-    c->chunks[j].src_offset = src_offset;
-    c->chunks[j].dst_offset = phdr[i].p_paddr;
-    c->chunks[j].length = phdr[i].p_filesz;
-    src_offset += phdr[i].p_filesz;
-    mbus_log(m, "OTA: Section %zd File:0x%08x Mem:0x%08x Size:0x%08x | %x %x",
-             i,
-             c->chunks[j].src_offset,
-             c->chunks[j].dst_offset,
-             c->chunks[j].length,
-             phdr[i].p_type,
-             phdr[i].p_flags);
-    if(pread(fd, image + c->chunks[j].src_offset,
-             c->chunks[j].length, phdr[i].p_offset) != c->chunks[j].length) {
-      mbus_log(m, "Failed to load data into memory from file");
-      fail = 1;
-    }
-    j++;
-  }
-
-  if(fail) {
-    return MBUS_ERR_OPERATION_FAILED;
-  }
-
-  mbus_error_t err = mbus_ota_xfer(m, mc, image, image_size, blocksize);
-  free(image);
-  return err;
-}
-
-
-
-
 // Transmit single raw image
 static mbus_error_t
 mbus_ota_elf_perform_r(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
@@ -161,12 +86,11 @@ mbus_ota_elf_perform_r(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
     return MBUS_ERR_OPERATION_FAILED;
   }
 
-  end_addr = (end_addr + blocksize - 1) & ~(blocksize - 1);
   uint32_t image_size = end_addr - start_addr;
 
-  void *image = malloc(image_size);
-  memset(image, 0xff, image_size);
-  mbus_log(m, "OTA: Image size: 0x%08x", image_size);
+  void *image = malloc(image_size + blocksize);
+  memset(image, 0xff, image_size + blocksize);
+  mbus_log(m, "OTA: Image size: 0x%08x", image_size - offset);
 
   int fail = 0;
   for(size_t i = 0; i < count; i++) {
@@ -184,8 +108,11 @@ mbus_ota_elf_perform_r(mbus_t *m, mbus_con_t *mc, Elf *elf, int fd,
   if(fail)
     return MBUS_ERR_OPERATION_FAILED;
 
+  image_size -= offset;
+  image_size = ((image_size + blocksize - 1) / blocksize) * blocksize;
+
   mbus_error_t err = mbus_ota_xfer(m, mc,
-                                   image + offset, image_size - offset,
+                                   image + offset, image_size,
                                    blocksize);
   free(image);
   return err;
@@ -202,9 +129,7 @@ mbus_ota_elf_perform(mbus_t *m, mbus_con_t *mc,
                      Elf *elf, int fd, char otamode, int blocksize,
                      int offset)
 {
-  if(otamode == 's') {
-    return mbus_ota_elf_perform_s(m, mc, elf, fd, blocksize);
-  } else if(otamode == 'r') {
+  if(otamode == 'r') {
     return mbus_ota_elf_perform_r(m, mc, elf, fd, blocksize, offset);
   } else {
     return MBUS_ERR_MISMATCH;
