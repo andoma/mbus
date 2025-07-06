@@ -149,6 +149,9 @@ mbus_error_t mbus_ping(mbus_t *m, uint8_t remote_addr);
 mbus_error_t mbus_ota(mbus_t *m, uint8_t target_addr, const char *path,
                       int force_upgrade);
 
+mbus_error_t mbus_remote_get(mbus_t *m, uint8_t target_addr,
+                             const char *remote_path, const char *local_path);
+
 #ifdef __cplusplus
 }
 #endif

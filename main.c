@@ -70,6 +70,15 @@ dispatch_command(void *arg)
 
     err = mbus_remote_shell(m, target_addr, "shell");
 
+  } else if(!strcmp(argv[0], "get")) {
+
+    if(argc != 3) {
+      fprintf(stderr, "usage: get <REMOTE-FILE> <LOCAL-FILE>\n");
+      exit(1);
+    }
+
+    err = mbus_remote_get(m, target_addr, argv[1], argv[2]);
+
   } else if(!strcmp(argv[0], "echo")) {
 
     err = mbus_remote_shell(m, target_addr, "echo");
